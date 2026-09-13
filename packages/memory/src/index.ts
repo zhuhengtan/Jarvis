@@ -1,0 +1,92 @@
+import { createHash } from "node:crypto";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { Pool } from "pg";
+import type { MemoryEngine } from "@jarvis/core";
+import { newId, now, redactSecrets, type Event, type Experience, type Goal, type MemoryRecord, type MemoryScope, type ProjectIdentity, type Session } from "@jarvis/shared";
+
+const exec = promisify(execFile);
+const digest = (input: string) => createHash("sha256").update(input).digest("hex").slice(0, 20);
+
+export class ProjectResolver {
+  async resolve(workspace: string): Promise<ProjectIdentity> {
+    const canonical = resolve(workspace);
+    let gitRemote: string | undefined;
+    try { gitRemote = (await exec("git", ["-C", canonical, "config", "--get", "remote.origin.url"])).stdout.trim() || undefined; } catch { /* non-git workspaces are supported */ }
+    let metadata: { id?: string; name?: string } = {};
+    try { metadata = JSON.parse(await readFile(join(canonical, ".jarvis", "project.json"), "utf8")); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    const id = metadata.id?.trim() || `project_${digest(gitRemote || canonical)}`;
+    return { id, workspace: canonical, gitRemote, name: metadata.name?.trim() || basename(canonical) || "workspace" };
+  }
+}
+
+export class MarkdownMemoryStore {
+  constructor(private readonly root: string) {}
+  private path(record: MemoryRecord) { return join(this.root, record.scope === "global" ? "global" : "projects", record.projectId ?? "unassigned", `${record.id}.md`); }
+  async save(record: MemoryRecord): Promise<void> {
+    const path = this.path(record); await mkdir(resolve(path, ".."), { recursive: true });
+    const metadata = { id: record.id, revision: record.revision, scope: record.scope, project_id: record.projectId ?? null, kind: record.kind, status: record.status, source_refs: record.sourceRefs, created_at: record.createdAt, updated_at: record.updatedAt };
+    await writeFile(path, `---\n${Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n")}\n---\n\n# ${record.title}\n\n${record.content}\n`, "utf8");
+  }
+  async list(scope: MemoryScope, projectId?: string): Promise<MemoryRecord[]> {
+    const folder = scope === "global" ? join(this.root, "global") : join(this.root, "projects", projectId ?? "");
+    let files: string[]; try { files = (await readdir(folder)).filter((file) => file.endsWith(".md")); } catch { return []; }
+    const parsed = await Promise.all(files.map(async (file) => this.parse(join(folder, file))));
+    return parsed.filter((item): item is MemoryRecord => Boolean(item));
+  }
+  private async parse(path: string): Promise<MemoryRecord | undefined> {
+    const raw = await readFile(path, "utf8"); const match = raw.match(/^---\n([\s\S]*?)\n---\n\n# (.*?)\n\n([\s\S]*?)\n?$/);
+    if (!match) return undefined;
+    const attributes = Object.fromEntries(match[1].split("\n").map((line) => { const index = line.indexOf(": "); return [line.slice(0, index), JSON.parse(line.slice(index + 2))]; }));
+    return { id: attributes.id, revision: attributes.revision, scope: attributes.scope, projectId: attributes.project_id ?? undefined, kind: attributes.kind, status: attributes.status, sourceRefs: attributes.source_refs ?? [], createdAt: attributes.created_at, updatedAt: attributes.updated_at, title: match[2], content: match[3] };
+  }
+}
+
+export interface DynamicStore { initialize(): Promise<void>; createSession(input: Omit<Session, "id" | "createdAt" | "updatedAt" | "status">): Promise<Session>; getSession(id: string): Promise<Session | undefined>; closeSession(id: string): Promise<void>; appendEvent(input: Omit<Event, "id" | "occurredAt">): Promise<Event>; recentEvents(projectId: string, limit: number): Promise<Event[]>; saveGoal(input: Omit<Goal, "id" | "updatedAt">): Promise<Goal>; activeGoal(projectId: string): Promise<Goal | undefined>; listGoals(projectId: string): Promise<Goal[]>; saveExperience(input: Omit<Experience, "id" | "createdAt">): Promise<Experience>; listExperiences(projectId: string, limit: number): Promise<Experience[]>; }
+
+export class JsonlDynamicStore implements DynamicStore {
+  private readonly sessions = new Map<string, Session>(); private readonly events: Array<Event & { projectId: string }> = []; private readonly goals = new Map<string, Goal>(); private readonly experiences: Experience[] = [];
+  constructor(private readonly root: string) {}
+  async initialize() { try { const raw = await readFile(join(this.root, "events.jsonl"), "utf8"); for (const line of raw.split("\n")) { if (!line.trim()) continue; const item = JSON.parse(line); if (item.type === "session") this.sessions.set(item.session.id, item.session); if (item.type === "event") this.events.push(item.event); if (item.type === "goal") this.goals.set(item.goal.id, item.goal); if (item.type === "experience") this.experiences.push(item.experience); } } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } }
+  async createSession(input: Omit<Session, "id" | "createdAt" | "updatedAt" | "status">): Promise<Session> { const session = { ...input, id: newId("session"), status: "active" as const, createdAt: now(), updatedAt: now() }; this.sessions.set(session.id, session); await this.persist({ type: "session", session }); return session; }
+  async getSession(id: string) { return this.sessions.get(id); }
+  async closeSession(id: string) { const session = this.sessions.get(id); if (!session) return; session.status = "closed"; session.updatedAt = now(); await this.persist({ type: "session", session }); }
+  async appendEvent(input: Omit<Event, "id" | "occurredAt">) { const session = this.sessions.get(input.sessionId); if (!session) throw new Error("Unknown session"); const event = { ...input, id: newId("event"), occurredAt: now(), content: redactSecrets(input.content), projectId: session.projectId }; this.events.push(event); await this.persist({ type: "event", event }); return event; }
+  async recentEvents(projectId: string, limit: number) { return this.events.filter((event) => event.projectId === projectId).slice(-limit).reverse().map(({ projectId: _, ...event }) => event); }
+  async saveGoal(input: Omit<Goal, "id" | "updatedAt">) { const goal = { ...input, id: newId("goal"), updatedAt: now() }; if (goal.status === "active") for (const existing of this.goals.values()) if (existing.projectId === goal.projectId && existing.status === "active") { existing.status = "completed"; existing.updatedAt = now(); await this.persist({ type: "goal", goal: existing }); } this.goals.set(goal.id, goal); await this.persist({ type: "goal", goal }); return goal; }
+  async activeGoal(projectId: string) { return [...this.goals.values()].filter((goal) => goal.projectId === projectId && goal.status === "active").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]; }
+  async listGoals(projectId: string) { return [...this.goals.values()].filter((goal) => goal.projectId === projectId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
+  async saveExperience(input: Omit<Experience, "id" | "createdAt">) { const experience = { ...input, id: newId("experience"), createdAt: now() }; this.experiences.push(experience); await this.persist({ type: "experience", experience }); return experience; }
+  async listExperiences(projectId: string, limit: number) { return this.experiences.filter((experience) => experience.projectId === projectId).slice(-limit).reverse(); }
+  private async persist(value: unknown) { await mkdir(this.root, { recursive: true }); await writeFile(join(this.root, "events.jsonl"), `${JSON.stringify(value)}\n`, { flag: "a" }); }
+}
+
+export class PostgresDynamicStore implements DynamicStore {
+  private readonly pool: Pool;
+  constructor(connectionString: string) { this.pool = new Pool({ connectionString }); }
+  async initialize() { await this.migrate(); }
+  async migrate() { await this.pool.query(`CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS sessions (id text primary key, project_id text not null, workspace text not null, client text not null, task text not null, status text not null, created_at timestamptz not null, updated_at timestamptz not null); CREATE TABLE IF NOT EXISTS events (id text primary key, session_id text not null references sessions(id), type text not null, content text not null, occurred_at timestamptz not null); CREATE TABLE IF NOT EXISTS goals (id text primary key, project_id text not null, title text not null, status text not null, updated_at timestamptz not null); CREATE TABLE IF NOT EXISTS experiences (id text primary key, session_id text not null references sessions(id), project_id text not null, summary text not null, decisions jsonb not null, failures jsonb not null, next_steps jsonb not null, created_at timestamptz not null); CREATE INDEX IF NOT EXISTS events_session_idx ON events(session_id, occurred_at DESC); CREATE INDEX IF NOT EXISTS goals_project_idx ON goals(project_id, updated_at DESC); CREATE INDEX IF NOT EXISTS experiences_project_idx ON experiences(project_id, created_at DESC);`); }
+  async createSession(input: Omit<Session, "id" | "createdAt" | "updatedAt" | "status">) { const session = { ...input, id: newId("session"), status: "active" as const, createdAt: now(), updatedAt: now() }; await this.pool.query("INSERT INTO sessions VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [session.id, session.projectId, session.workspace, session.client, session.task, session.status, session.createdAt, session.updatedAt]); return session; }
+  async getSession(id: string) { const row = (await this.pool.query("SELECT id, project_id AS \\\"projectId\\\", workspace, client, task, status, created_at AS \\\"createdAt\\\", updated_at AS \\\"updatedAt\\\" FROM sessions WHERE id=$1", [id])).rows[0]; return row as Session | undefined; }
+  async closeSession(id: string) { await this.pool.query("UPDATE sessions SET status='closed', updated_at=now() WHERE id=$1", [id]); }
+  async appendEvent(input: Omit<Event, "id" | "occurredAt">) { const event = { ...input, id: newId("event"), occurredAt: now(), content: redactSecrets(input.content) }; await this.pool.query("INSERT INTO events VALUES ($1,$2,$3,$4,$5)", [event.id, event.sessionId, event.type, event.content, event.occurredAt]); return event; }
+  async recentEvents(projectId: string, limit: number) { const rows = (await this.pool.query("SELECT e.id,e.session_id AS \\\"sessionId\\\",e.type,e.content,e.occurred_at AS \\\"occurredAt\\\" FROM events e JOIN sessions s ON s.id=e.session_id WHERE s.project_id=$1 ORDER BY e.occurred_at DESC LIMIT $2", [projectId, limit])).rows; return rows as Event[]; }
+  async saveGoal(input: Omit<Goal, "id" | "updatedAt">) { const goal = { ...input, id: newId("goal"), updatedAt: now() }; await this.pool.query("UPDATE goals SET status='completed',updated_at=now() WHERE project_id=$1 AND status='active'", [goal.projectId]); await this.pool.query("INSERT INTO goals VALUES ($1,$2,$3,$4,$5)", [goal.id, goal.projectId, goal.title, goal.status, goal.updatedAt]); return goal; }
+  async activeGoal(projectId: string) { return (await this.pool.query("SELECT id, project_id AS \\\"projectId\\\", title, status, updated_at AS \\\"updatedAt\\\" FROM goals WHERE project_id=$1 AND status='active' ORDER BY updated_at DESC LIMIT 1", [projectId])).rows[0] as Goal | undefined; }
+  async listGoals(projectId: string) { return (await this.pool.query("SELECT id, project_id AS \\\"projectId\\\", title, status, updated_at AS \\\"updatedAt\\\" FROM goals WHERE project_id=$1 ORDER BY updated_at DESC", [projectId])).rows as Goal[]; }
+  async saveExperience(input: Omit<Experience, "id" | "createdAt">) { const experience = { ...input, id: newId("experience"), createdAt: now() }; await this.pool.query("INSERT INTO experiences VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [experience.id, experience.sessionId, experience.projectId, experience.summary, JSON.stringify(experience.decisions), JSON.stringify(experience.failures), JSON.stringify(experience.nextSteps), experience.createdAt]); return experience; }
+  async listExperiences(projectId: string, limit: number) { return (await this.pool.query("SELECT id, session_id AS \\\"sessionId\\\", project_id AS \\\"projectId\\\", summary, decisions, failures, next_steps AS \\\"nextSteps\\\", created_at AS \\\"createdAt\\\" FROM experiences WHERE project_id=$1 ORDER BY created_at DESC LIMIT $2", [projectId, limit])).rows as Experience[]; }
+  async close() { await this.pool.end(); }
+}
+
+export class FileMemoryEngine implements MemoryEngine {
+  constructor(private readonly store: MarkdownMemoryStore, private readonly dynamic: DynamicStore) {}
+  async recall({ projectId, query, limit }: { projectId: string; query: string; limit: number }) { const terms = query.toLowerCase().split(/\s+/).filter(Boolean); const records = [...await this.store.list("global"), ...await this.store.list("project", projectId)].filter((record) => record.status === "active"); return records.map((record) => ({ record, score: terms.reduce((sum, term) => sum + Number(`${record.title} ${record.content}`.toLowerCase().includes(term)), 0) })).filter(({ score }) => score > 0 || !terms.length).sort((left, right) => right.score - left.score || right.record.updatedAt.localeCompare(left.record.updatedAt)).slice(0, limit).map(({ record }) => record); }
+  async observe(input: Omit<Event, "id" | "occurredAt">) { return this.dynamic.appendEvent(input); }
+  async promote({ record, expectedRevision }: { record: MemoryRecord; expectedRevision: number }) { if (record.revision !== expectedRevision) throw new Error("Memory revision conflict"); const active = { ...record, revision: record.revision + 1, status: "active" as const, updatedAt: now() }; await this.store.save(active); return active; }
+  async consolidate() { return { promoted: 0, archived: 0 }; }
+  async saveCandidate(input: Omit<MemoryRecord, "id" | "revision" | "status" | "createdAt" | "updatedAt">) { const record: MemoryRecord = { ...input, id: newId("memory"), revision: 1, status: "candidate", createdAt: now(), updatedAt: now() }; await this.store.save(record); return record; }
+  async candidates(projectId: string) { return [...await this.store.list("global"), ...await this.store.list("project", projectId)].filter((record) => record.status === "candidate").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
+}

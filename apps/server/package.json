@@ -1,0 +1,8 @@
+{
+  "name": "@jarvis/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "tsx watch src/main.ts", "start": "tsx src/main.ts", "build": "tsc -p tsconfig.json", "check": "tsc --noEmit", "test": "vitest run" },
+  "dependencies": { "@fastify/cors": "^11.0.0", "@jarvis/agents": "workspace:*", "@jarvis/context": "workspace:*", "@jarvis/evaluation": "workspace:*", "@jarvis/memory": "workspace:*", "@jarvis/reflection": "workspace:*", "@jarvis/shared": "workspace:*", "@jarvis/skills": "workspace:*", "@jarvis/tools": "workspace:*", "fastify": "^5.0.0", "pino": "^9.0.0", "zod": "^4.1.0" }
+}

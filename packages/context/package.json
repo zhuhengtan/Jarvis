@@ -1,0 +1,9 @@
+{
+  "name": "@jarvis/context",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": { "build": "tsc -p tsconfig.json", "check": "tsc --noEmit", "test": "vitest run" },
+  "dependencies": { "@jarvis/core": "workspace:*", "@jarvis/shared": "workspace:*" }
+}

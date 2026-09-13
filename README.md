@@ -1992,3 +1992,40 @@ LLM 被新的神经网络取代
 **模型是算力。**
 
 **Jarvis 才是长期存在的认知主体。**
+
+---
+
+# 43. 当前实现（v0.1）
+
+此仓库已经以本文档的架构从零建立为一个唯一的 `@jarvis/*` pnpm workspace；没有 `jarvis-goose`、`jarvis-mvp` 或第二套 Agent Runtime。旧目录只作为设计与测试经验的参考，不是本项目的运行依赖。
+
+当前可运行的首个垂直切片包括：
+
+- `apps/server`：只监听 loopback 的 Fastify Internal API（session、context、memory search、event、experience、skill、goal）。
+- `apps/mcp`：同一 Runtime API 的标准 MCP stdio 和 Streamable HTTP adapter。
+- `apps/cli`：`jarvis status`、会话创建与记忆查询。
+- `apps/worker`：独立的 consolidation worker 入口；自动提升候选记忆仍被明确禁止。
+- `packages/memory`：Git-friendly Markdown 长期记忆、项目隔离、候选→审核→激活的版本化提升，以及 PostgreSQL/pgvector schema 入口。
+- `packages/context`、`goals`、`skills`、`providers`、`permissions`：由 Runtime 组合的领域边界，而不是 MCP/CLI 的私有逻辑。
+
+首次启动若未提供名字，Jarvis 会返回“你希望我叫什么名字？”的 onboarding 状态；MCP 客户端应将此问题展示给用户。用户可以直接回答名字，或在之后说“以后叫你 Friday”。CLI 同样支持：`pnpm cli identity name Friday` 与 `pnpm cli identity say "以后叫你 Friday"`。名字保存在本地 `data/identity.json`，重启后仍有效。
+
+## 快速开始
+
+```bash
+cp .env.example .env
+pnpm install
+pnpm start
+```
+
+这会直接以本地持久化模式启动 Runtime、Worker 与 HTTP MCP。若要启用 PostgreSQL + pgvector，先执行 `docker compose up -d`，再取消 `.env` 中 `DATABASE_URL` 的注释后重启。
+
+开发时可先不设置 `DATABASE_URL`，Runtime 会使用本地 JSONL 动态事件回退，以便验证完整 Session/API/MCP 路径；生产环境必须配置 PostgreSQL，Markdown 才仍是可 Git 化的长期认知资产，向量索引则永远是可重建的派生数据。
+
+stdio MCP：
+
+```bash
+pnpm mcp
+```
+
+HTTP MCP：`http://127.0.0.1:7331/mcp`。

@@ -1,0 +1,10 @@
+{
+  "name": "@jarvis/memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": { "build": "tsc -p tsconfig.json", "check": "tsc --noEmit", "test": "vitest run" },
+  "dependencies": { "@jarvis/core": "workspace:*", "@jarvis/shared": "workspace:*", "pg": "^8.16.0" },
+  "devDependencies": { "@types/pg": "^8.15.0" }
+}

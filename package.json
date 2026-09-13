@@ -1,0 +1,17 @@
+{
+  "name": "jarvis-cognitive-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker dev",
+    "start": "pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker start",
+    "mcp": "pnpm --filter @jarvis/mcp stdio",
+    "cli": "pnpm --filter @jarvis/cli start",
+    "test": "pnpm --filter @jarvis/memory test",
+    "check": "pnpm -r check"
+  },
+  "devDependencies": { "@types/node": "^24.0.0", "tsx": "^4.20.0", "typescript": "^5.8.0", "vitest": "^3.2.0" }
+}
