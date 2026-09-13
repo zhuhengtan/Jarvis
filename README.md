@@ -1,2000 +1,1994 @@
 # Jarvis Cognitive Memory Architecture
+## 开发、部署与 AI IDE 接入说明
 
-## 1. 系统定位
+## 1. 项目目标
 
-Jarvis Cognitive Memory Architecture，简称 **JCMA**。
+Jarvis Cognitive Memory Architecture（JCMA）是一个独立运行的 **Personal Cognitive Runtime**。
 
-目标不是开发一个“本地 ChatGPT”，也不是开发一个绑定某个模型的 Agent，而是构建一个：
+它不依赖 Codex、Cursor、Antigravity、Claude Code 或任何具体模型。
 
-> **拥有独立记忆、目标、技能、经验、工具和行为能力，并可以自由更换底层认知模型的 Personal Cognitive Runtime。**
+这些 AI IDE / Agent 都只是 Jarvis 的客户端。
 
-Jarvis 本身不等于任何一个大模型。
-
-GPT、Claude、Gemini、Qwen、本地模型，甚至未来不同架构的神经网络，都只是 Jarvis 可以使用的 **Cognitive Provider**。
-
-真正属于 Jarvis 的是：
+核心关系：
 
 ```text
-Identity
-Memory
-Goals
-Experience
-Skills
-Plugins
-Permissions
-History
+Codex
+Cursor
+Antigravity
+Claude Code
+自研 Agent
+本地模型
+     │
+     │ MCP / HTTP
+     ▼
+┌──────────────────────┐
+│       Jarvis         │
+│  Cognitive Runtime   │
+├──────────────────────┤
+│ Memory               │
+│ Goals                │
+│ Experience            │
+│ Skills                │
+│ Context               │
+│ Self Model            │
+│ Evaluation            │
+│ Reflection            │
+└──────────────────────┘
 ```
 
 因此：
 
-> 模型可以换，Jarvis 不会失忆。
-
-> Agent 框架可以换，Jarvis 仍然是同一个 Jarvis。
-
----
-
-# 2. 核心设计原则
-
-整个系统遵循六个原则。
-
-### 模型无关
-
-系统不能依赖：
-
 ```text
-Prompt → LLM → Text
-```
+Codex 负责 Coding
 
-而应该抽象成：
+Cursor 负责 Coding
 
-```text
-Task
-↓
-Cognitive Runtime
-↓
-Cognitive Provider
-↓
-Structured Result / Action
-```
+Antigravity 负责 Agent Workflow
 
-当前 Provider 可以是 LLM。
-
-未来可以是：
-
-```text
-LLM
-Multimodal Model
-World Model
-Neural Cognitive Model
-Neuro-symbolic Model
-其他未来模型
+Jarvis 负责：
+“我是谁”
+“用户是谁”
+“这个项目是什么”
+“以前发生过什么”
+“做过什么决定”
+“学会了什么”
+“现在应该继续什么”
 ```
 
 ---
 
-### 记忆属于系统，而不是模型
+# 2. 核心架构
 
-模型自身 Context、模型 Provider、模型权重都不能作为 Jarvis 唯一记忆来源。
-
-核心长期记忆必须保存在 Jarvis 自己控制的数据层中。
-
----
-
-### 原始事实永远可追溯
-
-Jarvis 不能只保存 AI 总结后的结果。
-
-必须同时保存：
+建议最终服务拓扑：
 
 ```text
-原始事件
-↓
-经历
-↓
-理解
-↓
-长期认知
+                     AI Clients
+                          
+     Codex       Cursor      Antigravity
+        │           │             │
+        └───────────┼─────────────┘
+                    │
+                   MCP
+                    │
+              ┌─────▼─────┐
+              │ Jarvis MCP │
+              │  Gateway   │
+              └─────┬─────┘
+                    │
+              Internal API
+                    │
+        ┌───────────▼───────────┐
+        │     Jarvis Runtime    │
+        ├───────────────────────┤
+        │ Context Engine        │
+        │ Memory Engine         │
+        │ Goal Engine           │
+        │ Experience Engine     │
+        │ Skill Engine          │
+        │ Agent Manager         │
+        │ Evaluation Engine     │
+        │ Reflection Engine     │
+        │ Permission Engine     │
+        │ Cognitive Router      │
+        └───────────┬───────────┘
+                    │
+      ┌─────────────┼──────────────┐
+      ▼             ▼              ▼
+ Markdown/Git    PostgreSQL     Local Models
+                 + pgvector       Ollama
 ```
 
-如果 AI 某次总结错误，可以从原始事件重新构建记忆。
+Jarvis Runtime 是唯一核心。
 
----
+MCP 只是其中一个 Adapter。
 
-### Experience ≠ Memory ≠ Knowledge
-
-三者需要区分。
+以后还可以增加：
 
 ```text
-Experience
-我经历过什么
-
-Memory
-我记得什么
-
-Knowledge
-我认为哪些东西是真实、稳定、值得长期保留的
-```
-
----
-
-### 能力可以成长，但必须可控
-
-Jarvis 可以：
-
-- 自动学习 Skill
-- 自动修改 Skill
-- 自动形成 Workflow
-- 自动整理 Memory
-
-但不能毫无约束地修改自身核心能力。
-
-所有长期能力变更必须经过 Evaluation。
-
----
-
-### 所有行为可解释、可审计、可回滚
-
-Jarvis 做过什么、为什么做、依据什么记忆、调用了什么工具，都应该能够追踪。
-
----
-
-# 3. 总体架构
-
-```text
-                        User
-                         │
-                         ▼
-                ┌────────────────┐
-                │ Jarvis Gateway │
-                └───────┬────────┘
-                        │
-                        ▼
-               ┌─────────────────┐
-               │ Jarvis Runtime  │
-               └────────┬────────┘
-                        │
-       ┌────────────────┼─────────────────┐
-       │                │                 │
-       ▼                ▼                 ▼
-    Goal Engine     Context Engine    Self Model
-       │                │                 │
-       └────────────────┼─────────────────┘
-                        │
-                  Memory Engine
-                        │
-     ┌──────────┬───────┼────────┬──────────┐
-     ▼          ▼       ▼        ▼          ▼
- Working    Episodic  Semantic   RAG      Event
- Memory      Memory    Memory   Archive    Store
-                        │
-              ┌─────────┼──────────┐
-              ▼         ▼          ▼
-           Skills   Experience   Knowledge
-              │
-              ▼
-        Cognitive Runtime
-              │
-     ┌────────┼─────────┐
-     ▼        ▼          ▼
-   Main    Subagents   Reflection
-   Agent
-     │
-     ▼
-       Model / Cognitive Router
-     ┌──────┼────────┬─────────┐
-     ▼      ▼        ▼         ▼
-   Local   GPT     Claude    Future
-   Model                     Model
-     │
-     ▼
-        Action / Tool Runtime
-     ┌────────┬────────┬─────────┐
-     ▼        ▼        ▼         ▼
-    MCP      CLI      API        UI
-     │
-     ▼
-             Computer / Internet
+REST API
+WebSocket
+Desktop Client
+Mobile Client
+Voice Client
+Browser Extension
 ```
 
 ---
 
-# 4. Cognitive Runtime
+# 3. 推荐技术栈
 
-Cognitive Runtime 是整个 Jarvis 的核心调度层。
-
-负责：
-
-- 接收用户任务
-- 理解当前目标
-- 加载相关记忆
-- 加载相关 Skills
-- 判断是否需要工具
-- 判断是否需要 Subagent
-- 选择 Cognitive Provider
-- 执行任务
-- 评价结果
-- 更新 Experience
-- 更新 Memory
-
-它本身不应该包含某个模型特有的逻辑。
-
-核心流程：
+建议使用：
 
 ```text
-Input
-↓
-Intent / Goal Analysis
-↓
-Context Construction
-↓
-Memory Retrieval
-↓
-Skill Retrieval
-↓
-Planning
-↓
-Model / Subagent / Tool Execution
-↓
-Evaluation
-↓
-Response
-↓
-Reflection
-↓
-Memory / Skill / Experience Update
+Runtime:
+Node.js 22+
+TypeScript
+
+Monorepo:
+pnpm workspace
+
+HTTP:
+Fastify
+
+MCP:
+@modelcontextprotocol/sdk
+
+Database:
+PostgreSQL
+
+Vector Search:
+pgvector
+
+Markdown Memory:
+Filesystem + Git
+
+Local Model:
+Ollama
+
+Background Job:
+pg-boss
+
+Schema:
+Zod
+
+Logging:
+Pino
+
+Testing:
+Vitest
+```
+
+选择 TypeScript 的原因是：
+
+Jarvis 未来需要大量：
+
+```text
+MCP
+Plugin
+CLI
+Web API
+Desktop integration
+Agent integration
+```
+
+TypeScript 生态非常适合这一层。
+
+---
+
+# 4. 项目目录
+
+建议：
+
+```text
+jarvis/
+
+├── apps/
+│
+│   ├── server/
+│   │   └── Jarvis Runtime 服务
+│   │
+│   ├── mcp/
+│   │   └── MCP Gateway
+│   │
+│   ├── worker/
+│   │   └── 后台任务
+│   │
+│   └── cli/
+│       └── jarvis CLI
+│
+├── packages/
+│
+│   ├── core/
+│   ├── context/
+│   ├── memory/
+│   ├── goals/
+│   ├── events/
+│   ├── experience/
+│   ├── skills/
+│   ├── agents/
+│   ├── tools/
+│   ├── providers/
+│   ├── evaluation/
+│   ├── reflection/
+│   ├── permissions/
+│   └── shared/
+│
+├── data/
+│
+│   ├── memory/
+│   ├── skills/
+│   ├── workflows/
+│   ├── goals/
+│   └── archive/
+│
+├── docker/
+│
+├── scripts/
+│
+├── docs/
+│
+├── docker-compose.yml
+│
+└── package.json
 ```
 
 ---
 
-# 5. Context Engine
+# 5. 数据存储设计
 
-Context 是 Jarvis 的“工作记忆”。
+Jarvis 不应该把所有东西存进一个数据库。
 
-只保存当前任务真正需要的信息。
+使用三类存储。
 
-包括：
+## Markdown + Git
 
-```text
-当前用户请求
-当前 Goal
-当前 Task
-当前 Project
-近期关键对话
-重要 Memory
-相关 Skill
-Tool Result
-Subagent Result
-当前执行状态
-```
-
-Context 不应该无限增长。
-
----
-
-# 6. Context Compaction
-
-当 Context 达到一定阈值时，不简单做 Summary。
-
-而是进行一次 **Memory Consolidation**。
+保存真正属于 Jarvis 的长期认知资产：
 
 ```text
-Context
-↓
-Context Analyzer
-↓
-识别
+data/
 
-事实
-决策
-经验
-任务状态
-用户偏好
-未完成事项
-错误尝试
-重要结论
-
-↓
-分别进入
-
-Memory
-Experience
-Goal
-Task State
-Event Store
-
-↓
-生成新的 Compact Context
-```
-
-因此 Context 压缩实际上完成的是：
-
-> **短期记忆 → 长期记忆的转化。**
-
-类似人类睡眠中的记忆巩固过程。
-
----
-
-# 7. Memory Architecture
-
-Memory 不再简单理解成三级缓存。
-
-完整结构分为：
-
-```text
-Working Memory
-Episodic Memory
-Semantic Memory
-Procedural Memory
-Archive
-Event Store
-```
-
----
-
-# 8. Working Memory
-
-对应短期工作记忆。
-
-保存：
-
-- 当前任务
-- 当前思考范围
-- 当前对话
-- 临时变量
-- 当前工具结果
-
-特点：
-
-```text
-速度最快
-生命周期最短
-容量最有限
-```
-
-主要存在 Context 中。
-
----
-
-# 9. Episodic Memory
-
-对应“我经历过什么”。
-
-例如：
-
-```text
-昨天修改过某个 Bug
-上周讨论过一个游戏设计
-某次 Build 失败
-某次方案被用户否决
-某个 Skill 曾经执行失败
-```
-
-这种记忆具有：
-
-```text
-时间
-地点/项目
-参与对象
-事件
-结果
-上下文
-```
-
----
-
-# 10. Semantic Memory
-
-对应“我知道什么”。
-
-主要以 Markdown / Wiki 形式保存。
-
-例如：
-
-```text
-用户偏好
-项目结构
-项目决策
-某个人的信息
-技术知识
-长期目标
-业务规则
-```
-
-这就是类似 LLM Wiki 的部分。
-
-建议目录：
-
-```text
 memory/
-
 ├── self/
 ├── user/
 ├── projects/
 ├── people/
 ├── concepts/
 ├── decisions/
-├── workflows/
-└── archive/
+└── workflows/
+
+skills/
+
+goals/
 ```
 
-Markdown 是 Jarvis 的长期稳定认知。
-
----
-
-# 11. Procedural Memory
-
-Procedural Memory 就是：
-
-> **我会怎么做。**
-
-主要由 Skills 和 Workflow 组成。
-
-例如：
+优点：
 
 ```text
-如何排查 Cocos UI 问题
-如何进行前端代码 Review
-如何进行面试评价
-如何发布微信小游戏
-如何分析某类 Bug
-```
-
-因此：
-
-```text
-Semantic Memory
-= Know What
-
-Procedural Memory
-= Know How
+人类可读
+AI 可读
+Git 可版本化
+可回滚
+可迁移
+与模型无关
 ```
 
 ---
 
-# 12. Event Store
+## PostgreSQL
 
-Event Store 是整个 Memory 系统的重要底座。
-
-任何重要事件首先保存原始记录：
+保存动态数据：
 
 ```text
-Event
-├── timestamp
-├── source
-├── actor
-├── action
-├── object
-├── project
-├── raw_content
-└── metadata
+events
+episodes
+experiences
+sessions
+tasks
+actions
+evaluations
+memory_metadata
+relationships
+agent_runs
 ```
 
-例如：
+Event Store 尽量采用 Append Only。
+
+---
+
+## pgvector
+
+用于：
 
 ```text
-2026-09-13
-用户决定取消方案 A，采用方案 B。
+Memory Retrieval
+
+RAG
+
+Experience Retrieval
+
+Skill Retrieval
+
+Semantic Search
 ```
 
-然后：
+注意：
+
+> Vector DB 只是索引，不是真实数据源。
+
+删除向量库以后，应该可以重新生成。
+
+---
+
+# 6. 核心 Runtime
+
+Jarvis Runtime 负责完整 Cognitive Loop：
 
 ```text
-Event
-↓
-Episodic Memory
-↓
+Input
+ ↓
+Session
+ ↓
+Goal Resolution
+ ↓
+Context Build
+ ↓
+Memory Recall
+ ↓
+Skill Recall
+ ↓
+Plan
+ ↓
+Agent / Model / Tool
+ ↓
+Result
+ ↓
+Evaluation
+ ↓
+Experience
+ ↓
 Reflection
-↓
-Semantic Memory
+ ↓
+Memory Update
+ ↓
+Skill Candidate
 ```
-
-Event Store 原则上尽量 Append Only。
-
-这样 Jarvis 永远可以回答：
-
-> “你为什么记得这件事？”
-
-并找到原始来源。
 
 ---
 
-# 13. Memory Metadata
+# 7. Session 是关键抽象
 
-每条 Memory 都应该附带 Metadata：
+任何外部 Agent 使用 Jarvis 时，都应该首先建立 Session。
+
+例如 Codex 启动：
 
 ```text
-id
-type
-source
-created_at
-updated_at
-last_accessed_at
+session.open
+```
 
-importance
-confidence
-access_frequency
+参数：
+
+```json
+{
+  "client": "codex",
+  "workspace": "/Projects/game-producer",
+  "task": "继续处理市场系统刷新问题"
+}
+```
+
+Jarvis 返回：
+
+```text
+session_id
 
 project
-people
-topics
 
-supersedes
-superseded_by
+active_goal
 
-expires_at
+context
+
+relevant_memories
+
+relevant_decisions
+
+relevant_experiences
+
+recommended_skills
+```
+
+之后所有调用带：
+
+```text
+session_id
+```
+
+任务结束：
+
+```text
+session.close
+```
+
+---
+
+# 8. Project Identity
+
+不要只依赖文件夹名称识别项目。
+
+建议生成：
+
+```text
+project_id
+```
+
+识别依据可以组合：
+
+```text
+Git Remote
+Repository Root
+Jarvis Project Metadata
+Workspace Path
 ```
 
 例如：
 
 ```text
-confidence: 0.6
+project_id:
+game-producer
+
+repo:
+git@github.com:xxx/game-producer.git
 ```
 
-代表：
+即使以后换电脑：
 
-> Jarvis 怀疑这件事正确，但并没有完全确认。
+```text
+D:/game-producer
+```
+
+变成：
+
+```text
+~/Projects/game-producer
+```
+
+Jarvis 仍然知道它是同一个项目。
 
 ---
 
-# 14. Memory Lifecycle
+# 9. Context Builder
 
-Memory 不应该永久不变。
+这是给 AI IDE 提供 Jarvis 记忆的核心。
 
-生命周期：
+暴露：
 
 ```text
-Observation
-↓
-Hypothesis
-↓
-Candidate Memory
-↓
-Confirmed Memory
-↓
-Active Memory
-↓
-Cold Memory
-↓
-Archive
+context.build
 ```
 
-如果出现新信息：
+例如：
 
-```text
-旧 Memory
-↓
-Conflict Detection
-↓
-比较来源和可信度
-↓
-更新 / 标记过期 / 建立版本关系
+```json
+{
+  "session_id": "...",
+  "task": "修复市场系统刷新问题",
+  "token_budget": 12000
+}
 ```
 
-避免长期运行后积累大量互相矛盾的信息。
-
----
-
-# 15. Memory Retrieval
-
-不能只靠 Vector Similarity。
-
-最终 Ranking 可以综合：
+Jarvis 内部查询：
 
 ```text
-Semantic Similarity
-+
+Active Goal
+
+Project Memory
+
+Recent Episodes
+
+Important Decisions
+
+Relevant Experience
+
+User Preferences
+
+Relevant Skills
+
+Current Project State
+```
+
+然后 Ranking：
+
+```text
 Goal Relevance
 +
 Project Relevance
 +
-People Relevance
+Semantic Similarity
 +
 Recency
 +
 Importance
 +
 Confidence
-+
-Access Frequency
-+
-Task Type
 ```
 
-例如用户说：
+最后生成：
 
-> “昨天那个问题后来怎么样了？”
+```text
+Context Package
+```
 
-“昨天 + 当前项目 + 当前任务”应该比单纯语义相似度更重要。
+外部 Agent 不需要自己理解 Jarvis 内部 Memory 结构。
 
 ---
 
-# 16. RAG Archive
+# 10. 不允许外部 Agent 直接修改核心 Memory
 
-RAG 不是 Jarvis 的 Memory 本身。
+这是非常重要的设计。
 
-它是：
-
-> **原始资料档案馆。**
-
-保存：
+不要提供：
 
 ```text
-历史聊天
-PDF
-代码
-网页
-邮件
-会议记录
-Git History
-文档
-日志
+memory.write_semantic()
 ```
 
-RAG 找到相关资料后，可以进一步形成 Semantic Memory。
-
-因此：
+让 Codex 自己修改：
 
 ```text
-RAG
-= Find Information
-
-Memory
-= Know Information
+user/preferences.md
 ```
 
----
+否则不同 Agent 很容易污染 Jarvis。
 
-# 17. Goal Engine
-
-Jarvis 不能只有 Memory。
-
-还必须知道：
-
-> “现在为什么要做这件事情？”
-
-Goal 分为：
+外部 Agent只能提交：
 
 ```text
-Long-term Goal
-Project Goal
-Active Goal
-Task Goal
-```
+Observation
 
-例如：
-
-```text
-Long-term
-构建自己的 Jarvis
-
-Project
-完成 Memory Engine
-
-Active
-实现 Memory Retrieval
-
-Task
-修改 Retriever Ranking
-```
-
-Goal 会参与：
-
-- Memory Retrieval
-- Task Planning
-- Subagent 创建
-- Model Routing
-- Skill 选择
-- 主动行为判断
-
-Goal 是让 Jarvis 从“有记忆”走向“有持续任务意识”的关键。
-
----
-
-# 18. Self Model
-
-Jarvis 除了认识用户，还必须认识自己。
-
-```text
-self/
-
-├── identity.md
-├── capabilities.md
-├── limitations.md
-├── permissions.md
-├── models.md
-├── plugins.md
-├── current-state.md
-└── learned-lessons.md
-```
-
-Jarvis 应该能够知道：
-
-```text
-我是谁
-我能做什么
-我不能做什么
-我有哪些工具
-当前使用哪个模型
-模型有哪些限制
-哪些操作需要用户确认
-```
-
----
-
-# 19. Experience System
-
-Experience 不直接等于 Skill。
-
-每一次任务都会产生 Experience：
-
-```text
-Task
-↓
-Approach
-↓
-Action
-↓
-Result
-↓
-Evaluation
-↓
-Experience
-```
-
-例如：
-
-```text
-问题：
-Cocos Scale 导致布局异常
-
-尝试：
-修改 Widget
-
-结果：
-失败
-
-最终方案：
-调整节点层级
-
-Outcome：
-Success
-```
-
-这种经验可以长期积累。
-
-当类似 Experience 不断出现后，才有资格形成 Skill。
-
----
-
-# 20. Skill System
-
-Skill 是 Jarvis 的稳定程序性能力。
-
-目录示例：
-
-```text
-skills/
-
-├── cocos-debug/
-│   ├── SKILL.md
-│   ├── examples/
-│   ├── scripts/
-│   └── eval/
-│
-├── code-review/
-├── research/
-└── game-design/
-```
-
-Skill 可以包含：
-
-```text
-适用场景
-前置条件
-SOP
-决策逻辑
-工具
-Prompt
-Example
-Failure Case
-Evaluation
-```
-
----
-
-# 21. Automatic Skill Learning
-
-Jarvis 可以自动发现：
-
-> 某类问题正在重复出现。
-
-例如：
-
-```text
-几十次 Debug Experience
-↓
-Pattern Detection
-↓
-Candidate Skill
-↓
-生成 Skill
-↓
-Evaluation
-↓
-正式 Skill
-```
-
----
-
-# 22. Skill Evolution
-
-Skill 可以持续优化。
-
-但不能：
-
-```text
-成功一次
-↓
-直接修改正式 Skill
-```
-
-正确流程：
-
-```text
-Experience
-↓
-提出 Skill 修改
-↓
-Candidate Version
-↓
-Sandbox
-↓
-Eval
-↓
-与旧版本比较
-↓
-新版本明显更好
-↓
-Promote
-```
-
-正式 Skill 必须版本化。
-
----
-
-# 23. Evaluation Engine
-
-Evaluation Engine 是 Self Evolution 的安全阀。
-
-用于评价：
-
-```text
-Task 是否完成
-结果是否正确
-Tool 是否成功
-Skill 是否有效
-模型是否适合
-Subagent 是否有价值
-Memory 是否可靠
-```
-
-没有 Evaluation，就不能真正做 Self Evolution。
-
-否则：
-
-> 自动学习很容易变成自动学坏。
-
----
-
-# 24. Subagent System
-
-Main Agent 不应该解决所有事情。
-
-Complex Task 可以拆成多个 Agent：
-
-```text
-Main Agent
-│
-├── Research Agent
-├── Coding Agent
-├── Debug Agent
-├── Memory Agent
-└── Review Agent
-```
-
----
-
-# 25. Dynamic Subagent
-
-Subagent 不一定需要用户手动开启。
-
-Jarvis 可以根据：
-
-```text
-任务复杂度
-任务类型
-并行价值
-Context 大小
-专业领域
-风险程度
-```
-
-自动判断是否启动。
-
----
-
-# 26. Temporary Agent 与 Persistent Agent
-
-### Temporary Agent
-
-完成任务后销毁。
-
-例如：
-
-```text
-Web Research
-Code Review
-Log Analysis
-```
-
-### Persistent Agent
-
-长期存在。
-
-例如：
-
-```text
-Coding Agent
-Game Design Agent
-Research Agent
-Personal Assistant
-Memory Agent
-```
-
-Persistent Agent 可以拥有自己的领域记忆。
-
----
-
-# 27. Plugin / Tool Architecture
-
-Jarvis 的 Tool 与 Skill 必须分离。
-
-Skill：
-
-> 知道怎么做。
-
-Plugin：
-
-> 能够做什么。
-
-例如：
-
-```text
-Skill:
-微信小游戏发布
-
-Plugins:
-Filesystem
-Cocos
-Git
-微信开发者工具
-Browser
-```
-
----
-
-# 28. Tool 接入优先级
-
-优先使用稳定接口：
-
-```text
-API
-↓
-CLI
-↓
-MCP
-↓
-Local RPC
-↓
-UI Automation
-↓
-Vision + Mouse/Keyboard
-```
-
-尽量不要一开始就依赖模拟鼠标。
-
----
-
-# 29. Computer Control Layer
-
-Jarvis 可以操作本地电脑。
-
-例如：
-
-```text
-Filesystem
-Shell
-Git
-VS Code
-Cocos Creator
-Unity
-Browser
-微信开发者工具
-Office
-Database
-NAS
-Home Assistant
-```
-
-例如：
-
-```text
-“把项目跑起来看看为什么报错。”
-```
-
-Jarvis：
-
-```text
-找到 Project
-↓
-读取 Project Memory
-↓
-启动 Cocos
-↓
-执行 Build
-↓
-读取日志
-↓
-分析错误
-↓
-搜索代码
-↓
-修改
-↓
-重新 Build
-↓
-验证
-↓
-记录 Experience
-```
-
----
-
-# 30. Cognitive Provider
-
-不要使用：
-
-```text
-LLMProvider
-```
-
-作为最高层抽象。
-
-建议：
-
-```text
-CognitiveProvider
-```
-
-统一接口类似：
-
-```text
-reason()
-plan()
-respond()
-evaluate()
-summarize()
-extract()
-```
-
-不同 Provider 自己实现能力映射。
-
----
-
-# 31. Model Router
-
-Jarvis 自动决定使用哪个 Provider。
-
-例如：
-
-```text
-小任务
-→ Local Small Model
-
-普通任务
-→ Local Large Model
-
-高难度 Coding
-→ Strong Coding Model
-
-复杂推理
-→ GPT / Claude
-
-视觉任务
-→ Multimodal Model
-```
-
----
-
-# 32. Model Escalation
-
-模型调用失败时可以自动升级。
-
-```text
-Local Small
-↓
-失败
-↓
-Local Large
-↓
-失败
-↓
-Cloud Strong Model
-```
-
-从而实现：
-
-> 本地模型优先，API 作为高能力兜底。
-
-控制长期成本。
-
----
-
-# 33. Permission System
-
-所有 Tool 调用必须经过统一权限层。
-
-建议：
-
-```text
-Level 0
-读取
-→ 自动
-
-Level 1
-普通执行
-→ 自动 + 日志
-
-Level 2
-修改文件
-→ 自动 + Undo
-
-Level 3
-删除 / Push / 发布
-→ 用户确认
-
-Level 4
-付款 / 对外发送 / 权限修改
-→ 强制确认
-```
-
-任何 Subagent 和 Plugin 都不能绕过 Permission Engine。
-
----
-
-# 34. Action Log
-
-Jarvis 所有行为记录：
-
-```text
-Who
-When
-Goal
-Task
-Why
-Memory Used
-Skill Used
-Model Used
-Tool Used
-Action
-Result
-Evaluation
-```
-
-以后可以直接问：
-
-> “你昨天修改了什么？”
-
-甚至：
-
-> “你为什么修改这个文件？”
-
-Jarvis 都可以解释。
-
----
-
-# 35. Proactive Engine
-
-Jarvis 不应该永远依赖：
-
-```text
-User
-↓
-Prompt
-↓
-Action
-```
-
-还应该支持：
-
-```text
 Event
-↓
-Trigger
-↓
-Jarvis
+
+Experience
+
+Session Result
 ```
 
 例如：
 
 ```text
-GitHub Issue
-Build Failed
-新邮件
-Calendar
-Server Error
-项目文件变化
-任务到期
-系统事件
+experience.record
 ```
 
-Jarvis 可以主动判断是否需要处理。
+或者：
+
+```text
+session.close
+```
+
+Jarvis 自己判断：
+
+```text
+是否写入 Episodic Memory
+
+是否修改 Semantic Memory
+
+是否修改 Project State
+
+是否产生 Decision
+
+是否生成 Skill Candidate
+```
+
+也就是：
+
+> Agent 可以提供经历，但不能直接修改 Jarvis 的认知。
 
 ---
 
-# 36. Reflection System
+# 11. MCP Gateway
 
-任务完成后运行 Reflection：
+AI IDE 统一通过 MCP 使用 Jarvis。
+
+第一批建议暴露以下 MCP Tools：
 
 ```text
-这次完成了吗？
+jarvis_session_open
 
-哪里做得好？
+jarvis_context_build
 
-哪里失败？
+jarvis_memory_search
 
-为什么失败？
+jarvis_project_context
 
-出现了什么新事实？
+jarvis_goal_get
 
-产生了什么经验？
+jarvis_skill_search
 
-是否需要更新 Memory？
+jarvis_skill_load
 
-是否应该产生 Skill？
+jarvis_event_record
 
-是否需要更新 Workflow？
+jarvis_experience_record
+
+jarvis_session_close
 ```
 
-Reflection 不是聊天输出，而是 Jarvis 的内部学习机制。
+后续增加：
+
+```text
+jarvis_agent_spawn
+
+jarvis_goal_create
+
+jarvis_action_history
+
+jarvis_self_capabilities
+```
 
 ---
 
-# 37. Self Evolution Loop
+# 12. MCP Resource
 
-最终形成：
+除了 Tools，还可以暴露 Resources：
 
 ```text
-Goal
+jarvis://user/profile
+
+jarvis://projects/current
+
+jarvis://goals/active
+
+jarvis://memory/recent
+
+jarvis://skills/index
+```
+
+Agent 可以直接读取。
+
+---
+
+# 13. MCP Prompt
+
+还可以暴露 Jarvis 自己维护的 Prompt Templates：
+
+```text
+jarvis-debug
+
+jarvis-project-review
+
+jarvis-research
+
+jarvis-code-review
+```
+
+这样某些 Skill 可以通过 MCP Prompt 提供给不同 IDE。
+
+---
+
+# 14. 同时支持两种 MCP Transport
+
+Jarvis MCP Server 建议同时支持：
+
+```text
+stdio
+```
+
+和：
+
+```text
+Streamable HTTP
+```
+
+## stdio
+
+适合同一台电脑：
+
+```text
+IDE
  ↓
-Task
+启动 jarvis-mcp
  ↓
-Action
+Jarvis Runtime
+```
+
+## Streamable HTTP
+
+适合：
+
+```text
+开发电脑
+       │
+       ▼
+Jarvis Server
+```
+
+例如：
+
+```text
+http://127.0.0.1:7331/mcp
+```
+
+或者局域网：
+
+```text
+http://192.168.1.10:7331/mcp
+```
+
+未来专门的 Jarvis 主机：
+
+```text
+https://jarvis.xxx/mcp
+```
+
+Cursor 当前官方支持 stdio、SSE 和 Streamable HTTP，因此这两种模式都可以直接覆盖。citeturn795474search0
+
+---
+
+# 15. Internal HTTP API
+
+MCP 不应该直接调用数据库。
+
+结构：
+
+```text
+MCP
  ↓
-Result
+Jarvis Service
  ↓
-Evaluation
+Domain Layer
+ ↓
+Database
+```
+
+同时暴露内部 REST：
+
+```text
+POST /v1/sessions
+POST /v1/context/build
+
+GET  /v1/memory/search
+
+GET  /v1/projects/:id/context
+
+GET  /v1/goals/active
+
+GET  /v1/skills/search
+
+POST /v1/events
+
+POST /v1/experiences
+
+POST /v1/sessions/:id/close
+```
+
+这样以后：
+
+```text
+Desktop App
+Mobile App
+Web
+Voice
+```
+
+不用走 MCP。
+
+---
+
+# 16. 本地模型
+
+Jarvis 本身也需要 Cognitive Provider。
+
+推荐首先支持：
+
+```text
+Ollama
+OpenAI Compatible API
+OpenAI
+Anthropic
+Gemini
+```
+
+统一接口：
+
+```ts
+interface CognitiveProvider {
+  reason(input: ReasonInput): Promise<ReasonResult>;
+
+  generate(input: GenerateInput): Promise<GenerateResult>;
+
+  evaluate(input: EvaluateInput): Promise<EvaluationResult>;
+
+  extract(input: ExtractInput): Promise<ExtractResult>;
+}
+```
+
+不要在其他模块直接调用：
+
+```text
+OpenAI SDK
+Ollama API
+Claude SDK
+```
+
+统一经过：
+
+```text
+CognitiveRouter
+```
+
+---
+
+# 17. Model Router
+
+例如配置：
+
+```yaml
+models:
+
+  local-small:
+    provider: ollama
+    model: xxx
+
+  local-large:
+    provider: ollama
+    model: xxx
+
+  cloud-strong:
+    provider: openai
+    model: xxx
+```
+
+Router 根据：
+
+```text
+Task Complexity
+
+Privacy
+
+Cost
+
+Context Length
+
+Required Capability
+```
+
+决定模型。
+
+---
+
+# 18. 本地运行
+
+推荐通过 Docker Compose 运行基础设施。
+
+```text
+docker-compose.yml
+
+postgres
+pgvector
+```
+
+模型使用：
+
+```text
+Ollama
+```
+
+直接运行在宿主机。
+
+Jarvis Runtime 本身开发环境直接：
+
+```bash
+pnpm install
+pnpm dev
+```
+
+生产模式：
+
+```bash
+pnpm build
+pnpm start
+```
+
+---
+
+# 19. 环境变量
+
+例如：
+
+```env
+JARVIS_PORT=7330
+
+JARVIS_MCP_PORT=7331
+
+DATABASE_URL=postgresql://jarvis:jarvis@localhost:5432/jarvis
+
+MEMORY_ROOT=/data/jarvis/memory
+
+SKILLS_ROOT=/data/jarvis/skills
+
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+
+DEFAULT_COGNITIVE_PROVIDER=ollama
+
+JARVIS_API_TOKEN=xxxx
+```
+
+---
+
+# 20. 本地启动流程
+
+完整过程：
+
+```bash
+docker compose up -d
+```
+
+启动 PostgreSQL。
+
+然后：
+
+```bash
+ollama serve
+```
+
+启动本地模型服务。
+
+然后：
+
+```bash
+pnpm dev
+```
+
+启动：
+
+```text
+Jarvis Runtime
+Worker
+MCP Gateway
+```
+
+最终：
+
+```text
+Jarvis API
+
+http://127.0.0.1:7330
+
+Jarvis MCP
+
+http://127.0.0.1:7331/mcp
+```
+
+---
+
+# 21. Jarvis CLI
+
+建议自己写一个 CLI：
+
+```bash
+jarvis
+```
+
+主要命令：
+
+```text
+jarvis start
+
+jarvis stop
+
+jarvis status
+
+jarvis doctor
+
+jarvis memory search
+
+jarvis memory inspect
+
+jarvis project list
+
+jarvis skill list
+
+jarvis session list
+```
+
+例如：
+
+```bash
+jarvis doctor
+```
+
+检查：
+
+```text
+Database
+Vector
+Memory Directory
+Git
+Ollama
+Embedding Model
+MCP Server
+Permissions
+```
+
+---
+
+# 22. Codex 接入
+
+Codex 当前支持 MCP，同时会读取 `AGENTS.md` 作为持久项目指令。citeturn765576search3turn765576search6
+
+直接添加 Jarvis：
+
+```bash
+codex mcp add jarvis \
+  --url http://127.0.0.1:7331/mcp
+```
+
+Codex 当前也使用：
+
+```text
+~/.codex/config.toml
+```
+
+维护 MCP 配置。OpenAI Codex 自身代码和文档中仍使用 `mcp_servers` 作为配置项。citeturn403449search4turn403449search6
+
+对应：
+
+```toml
+[mcp_servers.jarvis]
+url = "http://127.0.0.1:7331/mcp"
+```
+
+然后：
+
+```bash
+codex mcp list
+```
+
+检查。
+
+---
+
+# 23. Codex AGENTS.md
+
+项目里建议加入：
+
+```md
+# Jarvis Integration
+
+This project uses Jarvis Cognitive Memory Architecture.
+
+For non-trivial tasks:
+
+1. Open a Jarvis session for the current workspace.
+2. Retrieve the Jarvis context package before making architectural decisions.
+3. Search Jarvis memory when historical project context is relevant.
+4. Search Jarvis Skills before implementing repeated workflows.
+
+When completing a meaningful task:
+
+1. Record important events and outcomes.
+2. Record failures and final solutions as experience.
+3. Close the Jarvis session with:
+   - summary
+   - decisions
+   - changed files
+   - unresolved issues
+   - next steps
+
+Do not directly modify Jarvis semantic memory.
+Jarvis decides which information becomes long-term memory.
+```
+
+这样以后你只需要：
+
+```bash
+cd game-producer
+
+codex
+```
+
+然后说：
+
+```text
+继续昨天市场系统的问题。
+```
+
+Codex 会：
+
+```text
+Codex
+ ↓
+Jarvis session.open
+ ↓
+Jarvis context.build
+ ↓
+获取昨天的状态
+ ↓
+开始 Coding
+```
+
+---
+
+# 24. Cursor 接入
+
+Cursor 官方 MCP 配置支持：
+
+```text
+~/.cursor/mcp.json
+```
+
+作为全局配置。
+
+项目级配置：
+
+```text
+.cursor/mcp.json
+```
+
+Cursor 当前也原生支持 MCP Tools、Prompts 和 Resources。citeturn795474search0
+
+配置：
+
+```json
+{
+  "mcpServers": {
+    "jarvis": {
+      "url": "http://127.0.0.1:7331/mcp"
+    }
+  }
+}
+```
+
+然后在 Cursor Agent 中：
+
+```text
+继续处理这个项目，先从 Jarvis 获取项目上下文。
+```
+
+Cursor 会自动看到 Jarvis MCP Tools。
+
+Cursor 默认在 MCP Tool 执行前会请求授权，也可以通过自身 Run Mode 控制自动执行策略。citeturn795474search0
+
+---
+
+# 25. Cursor Rules
+
+建议项目加入：
+
+```text
+.cursor/rules/jarvis.mdc
+```
+
+内容类似：
+
+```text
+This workspace uses Jarvis.
+
+Before complex tasks:
+- open Jarvis session
+- retrieve project context
+- retrieve relevant skills
+
+After meaningful tasks:
+- record experience
+- close session
+
+Never directly treat conversation context as permanent Jarvis memory.
+```
+
+这样不用每次提醒 Cursor。
+
+---
+
+# 26. Antigravity 接入
+
+Antigravity 当前原生支持 MCP，本地和远程 MCP 都可以接。citeturn926307search0
+
+Workspace 配置：
+
+```text
+.agents/mcp_config.json
+```
+
+全局配置可由 Antigravity 的 MCP 管理界面维护；官方目前文档给出的 IDE 全局位置是：
+
+```text
+~/.gemini/config/mcp_config.json
+``` citeturn926307search0
+
+
+远程 MCP 注意：
+
+Antigravity 当前配置使用：
+
+```text
+serverUrl
+```
+
+而不是 Cursor 的：
+
+```text
+url
+```
+
+例如：
+
+```json
+{
+  "mcpServers": {
+    "jarvis": {
+      "serverUrl": "http://127.0.0.1:7331/mcp"
+    }
+  }
+}
+```
+
+Antigravity 官方目前明确支持 `command` 形式的 stdio Server 和 `serverUrl` 形式的 Streamable HTTP / SSE Server。citeturn926307search0
+
+---
+
+# 27. Antigravity Workspace Context
+
+建议项目同时提供：
+
+```text
+AGENTS.md
+```
+
+Antigravity 当前同样能够读取 workspace 中的 `AGENTS.md` 规则。citeturn926307search4
+
+因此可以直接复用前面的：
+
+```text
+Jarvis Integration Rules
+```
+
+不用维护两套规范。
+
+---
+
+# 28. 其他 AI IDE
+
+任何支持 MCP 的 Agent 都采用同一个思路：
+
+```text
+AI IDE
+ ↓
+Jarvis MCP
+ ↓
+Jarvis Runtime
+```
+
+如果支持 HTTP MCP：
+
+```text
+http://127.0.0.1:7331/mcp
+```
+
+如果只支持 stdio：
+
+```text
+node /path/to/jarvis/apps/mcp/dist/stdio.js
+```
+
+Jarvis 不需要知道：
+
+```text
+这个客户端究竟是 Cursor
+还是 Codex
+还是其他 IDE
+```
+
+只要 `session.open` 时带：
+
+```text
+client
+```
+
+即可。
+
+---
+
+# 29. 外部 Agent 身份
+
+每个客户端建议传：
+
+```text
+client_id
+
+client_type
+
+workspace
+
+session_id
+```
+
+例如：
+
+```json
+{
+  "client_type": "codex",
+  "workspace": "/Projects/game-producer"
+}
+```
+
+这样以后 Jarvis 可以知道：
+
+```text
+昨天这段代码是 Codex 修改的。
+
+今天这段分析来自 Antigravity。
+
+最后 Review 是 Cursor 完成的。
+```
+
+---
+
+# 30. 多 Agent 共享 Memory
+
+最终：
+
+```text
+              Jarvis
+
+         Shared Cognitive State
+
+      ┌──────────┼───────────┐
+      ▼          ▼           ▼
+
+    Codex      Cursor    Antigravity
+
+     │           │            │
+     └──── Experience ────────┘
+               ↓
+             Jarvis
+```
+
+上午：
+
+```text
+Codex 修改代码
+```
+
+下午：
+
+```text
+Cursor Review
+```
+
+晚上：
+
+```text
+Antigravity 继续开发
+```
+
+全部共享：
+
+```text
+Project Memory
+
+Decisions
+
+Goals
+
+Experience
+
+Skills
+```
+
+---
+
+# 31. Session Close
+
+这是最重要的写入入口之一。
+
+例如：
+
+```text
+jarvis_session_close
+```
+
+输入：
+
+```json
+{
+  "session_id": "...",
+
+  "result": "success",
+
+  "summary": "完成市场刷新逻辑重构",
+
+  "decisions": [
+    "市场刷新改成事件驱动"
+  ],
+
+  "changed_files": [
+    "MarketManager.ts"
+  ],
+
+  "failures": [
+    "最初使用定时轮询导致性能问题"
+  ],
+
+  "next_steps": [
+    "补充市场刷新测试"
+  ]
+}
+```
+
+Jarvis 后台：
+
+```text
+Event Store
  ↓
 Experience
+ ↓
+Evaluation
  ↓
 Reflection
  ↓
- ├─ Memory Update
- ├─ Skill Candidate
- ├─ Workflow Update
- ├─ Goal Update
- └─ Self Model Update
-        │
-        └─────────→ Next Task
+Project Memory
+ ↓
+Decision
+ ↓
+Goal Update
 ```
-
-这就是 Jarvis 真正的成长机制。
 
 ---
 
-# 38. Memory Consolidation
+# 32. Memory Consolidation Worker
 
-系统可以周期性进行类似“睡眠”的整理。
+后台 Worker 周期运行：
 
 ```text
-最近 Events
-+
-Recent Experience
-+
-Conversation
-+
-Memory
-↓
-Memory Consolidation
+memory.consolidate
+```
+
+读取：
+
+```text
+Recent Events
+
+Sessions
+
+Episodes
+
+Experiences
 ```
 
 执行：
 
 ```text
-去重
-冲突检测
-旧信息淘汰
-Memory 合并
-Memory 重写
-Knowledge 抽象
-Experience 聚类
-Skill Pattern Detection
+Deduplicate
+
+Conflict Detection
+
+Importance Evaluation
+
+Memory Promotion
+
+Memory Decay
+
 Archive
+
+Semantic Memory Update
 ```
 
-因此长期运行后不是越来越乱，而是越来越结构化。
+这样长期运行不会无限积累垃圾 Memory。
 
 ---
 
-# 39. 推荐数据目录
+# 33. Skill Learning Worker
+
+后台检查：
 
 ```text
-jarvis/
-
-├── core/
-│
-├── memory/
-│   ├── self/
-│   ├── user/
-│   ├── projects/
-│   ├── people/
-│   ├── concepts/
-│   ├── decisions/
-│   └── archive/
-│
-├── events/
-│
-├── experiences/
-│
-├── goals/
-│
-├── skills/
-│
-├── workflows/
-│
-├── plugins/
-│
-├── agents/
-│
-├── models/
-│
-├── permissions/
-│
-├── logs/
-│
-└── config/
+Experience Cluster
 ```
 
-核心长期资产尽量使用开放格式：
+例如发现：
 
 ```text
-Markdown
-JSON
-JSONL
-SQLite
-Git
+过去一个月出现 18 次类似 Cocos UI Bug
 ```
 
-避免被任何 Agent Framework 锁死。
+生成：
+
+```text
+Candidate Skill
+```
+
+但不直接成为正式 Skill。
+
+必须：
+
+```text
+Candidate
+
+↓
+
+Evaluation
+
+↓
+
+Sandbox
+
+↓
+
+Compare
+
+↓
+
+Promote
+```
 
 ---
 
-# 40. 存储设计
+# 34. Permission Engine
 
-建议不同数据选择不同存储：
-
-### Markdown / Git
-
-用于：
-
-```text
-Semantic Memory
-Skills
-Workflow
-Identity
-Goals
-重要决策
-```
-
-优点：
-
-- 人可以直接查看
-- 可以修改
-- 可以 Git
-- 可以回滚
-- 模型无关
-
-### SQLite / PostgreSQL
-
-用于：
-
-```text
-Events
-Experience
-Action Log
-Tasks
-Metadata
-Relations
-```
-
-### Vector DB
-
-用于：
-
-```text
-RAG
-Semantic Search
-Experience Retrieval
-Memory Candidate Retrieval
-```
-
-向量库永远只是索引。
-
-原始数据不能只存在 Vector DB。
-
----
-
-# 41. Memory Graph
-
-后续还可以在普通 Memory 之上建立关系图。
+Jarvis MCP 未来如果不仅提供 Memory，还提供电脑控制能力，就必须统一进入 Permission Engine。
 
 例如：
 
 ```text
-Hunter
-│
-├── owns → Project A
-├── prefers → Cocos
-└── works_on → Jarvis
+READ
+自动
 
-Project A
-├── uses → Cocos
-├── depends_on → Plugin X
-└── decision → Architecture B
+SEARCH
+自动
+
+WRITE FILE
+自动 + Audit
+
+RUN COMMAND
+Policy
+
+DELETE
+确认
+
+GIT PUSH
+确认
+
+SEND MESSAGE
+确认
+
+PAYMENT
+强确认
 ```
 
-这样 Jarvis 可以完成比单纯 Vector Search 更强的关系推理。
-
-不一定必须上完整 Graph Database。
-
-第一版完全可以用：
-
-```text
-Entity
-Relation
-Entity
-```
-
-存在普通数据库中。
+外部 Agent 永远不能绕过 Jarvis 权限系统。
 
 ---
 
-# 42. Jarvis 与 LLM Wiki 的关系
+# 35. 网络安全
 
-LLM Wiki 可以视为 Jarvis 的一个子系统。
-
-它主要对应：
+同机运行：
 
 ```text
-Semantic Memory
-+
-Knowledge Compilation
+127.0.0.1
 ```
 
-Jarvis 比 Wiki 多：
+即可。
+
+如果 Jarvis Server 放在专门 AI 主机：
 
 ```text
-Goals
-Episodes
-Experience
-Skills
-Subagents
-Tools
-Computer Control
-Model Routing
-Permissions
-Reflection
-Self Evolution
+开发电脑
+     │
+Tailscale / VPN
+     │
+Jarvis Server
 ```
 
-因此：
+不要直接：
 
 ```text
-LLM Wiki
-= Jarvis 的长期知识系统
+0.0.0.0:7331
+```
 
-Jarvis
-= 完整 Cognitive Runtime
+裸露公网。
+
+远程 MCP 至少增加：
+
+```text
+Bearer Token
+```
+
+例如：
+
+```http
+Authorization: Bearer xxx
 ```
 
 ---
 
-# 43. Jarvis 与传统 Agent 的区别
+# 36. Jarvis Server 模式
 
-传统 Agent：
+最终你真正想要的应该是：
 
 ```text
-Prompt
-↓
-Reason
-↓
-Tool
-↓
-Answer
+             Jarvis AI Server
+
+               JCMA Runtime
+
+        Memory / Goals / Skills
+
+          Models / RAG / Agent
+
+                  │
+
+      ┌───────────┼────────────┐
+      │           │            │
+      ▼           ▼            ▼
+
+   PC / Codex   Mac / Cursor   Laptop
+                              Antigravity
 ```
+
+所有设备连接同一个 Jarvis。
+
+---
+
+# 37. 一次完整真实流程
+
+你打开游戏项目：
+
+```bash
+cd game-producer
+codex
+```
+
+然后：
+
+```text
+继续昨天市场系统的问题。
+```
+
+Codex：
+
+```text
+session.open
+```
+
+↓
 
 Jarvis：
 
 ```text
-Identity
-+
-Goal
-+
-Memory
-+
-Experience
-+
-Skills
-+
-Context
-↓
-Reason
-↓
-Action
-↓
-Evaluation
-↓
-Learning
-↓
-Long-term Evolution
+识别 game-producer
 ```
 
----
-
-# 44. Jarvis 与人类认知的对应关系
+↓
 
 ```text
-Working Memory
-≈ 人类工作记忆
+context.build
+```
 
-Episodic Memory
-≈ 情景记忆
+↓
 
-Semantic Memory
-≈ 语义记忆
+返回：
 
-Skills
-≈ 程序性记忆
+```text
+当前 Goal
+
+昨天修改内容
+
+昨天的失败方案
+
+最终 Decision
+
+待解决事项
+
+相关 Skill
+```
+
+↓
+
+Codex 开始修改代码。
+
+修改完成：
+
+```text
+experience.record
+```
+
+↓
+
+```text
+session.close
+```
+
+↓
+
+Jarvis：
+
+```text
+记录 Event
+
+生成 Episode
+
+生成 Experience
+
+更新 Project Memory
+
+更新 Goal
 
 Reflection
-≈ 复盘
-
-Memory Consolidation
-≈ 睡眠记忆巩固
-
-Goals
-≈ 动机 / 目标
-
-Self Model
-≈ 自我认知
-
-Experience
-≈ 经历
-
-Attention / Retrieval
-≈ 联想和注意力
-
-Subagents
-≈ 专业认知模块
 ```
 
-但目标不是完全模拟人脑。
-
-所有设计仍以：
+第二天你打开 Cursor：
 
 ```text
-稳定
-高效
-可解释
-可迁移
-可审计
+这个项目 Codex 昨天做到哪里了？
 ```
 
-为第一原则。
+Cursor：
+
+```text
+Jarvis Context
+```
+
+↓
+
+直接得到完整结果。
 
 ---
 
-# 45. 开发架构
+# 38. 开发时最重要的边界
 
-推荐将核心拆成独立模块：
+一定保持：
 
 ```text
-@jarvis/core
+AI IDE
+≠ Memory Owner
 
-@jarvis/context
-@jarvis/memory
-@jarvis/events
-@jarvis/goals
-@jarvis/experience
-@jarvis/skills
-@jarvis/agents
-@jarvis/tools
-@jarvis/providers
-@jarvis/evaluation
-@jarvis/permissions
-@jarvis/reflection
+Model
+≠ Memory Owner
+
+MCP
+≠ Memory Owner
+
+Database
+≠ Cognitive System
 ```
 
-每个模块尽量通过接口通信。
-
-不要让：
+真正唯一拥有长期认知的必须是：
 
 ```text
-Memory → OpenAI
-
-Skill → Claude
-
-Agent → Ollama
+Jarvis Runtime
 ```
 
-产生直接依赖。
-
-应该统一经过 Runtime。
-
----
-
-# 46. 推荐核心接口
-
-概念上可以抽象为：
+外部所有系统都只是：
 
 ```text
-MemoryStore
-
-remember()
-recall()
-forget()
-update()
-search()
-consolidate()
-```
-
-```text
-SkillRegistry
-
-discover()
-load()
-execute()
-evaluate()
-promote()
-```
-
-```text
-CognitiveProvider
-
-reason()
-generate()
-evaluate()
-```
-
-```text
+Reader
+Worker
+Specialist
 Tool
-
-describe()
-checkPermission()
-execute()
-rollback()
-```
-
-```text
-Agent
-
-plan()
-delegate()
-act()
-reflect()
-```
-
-```text
-GoalManager
-
-create()
-activate()
-complete()
-reprioritize()
-```
-
-Jarvis Runtime 只依赖这些抽象。
-
----
-
-# 47. 开发方案
-
-开发时不要围绕“聊天 UI”组织代码。
-
-应该围绕一个完整 Cognitive Loop：
-
-```text
-Receive
-↓
-Understand
-↓
-Goal
-↓
-Recall
-↓
-Plan
-↓
-Execute
-↓
-Evaluate
-↓
-Learn
-↓
-Remember
-```
-
-每个环节都是独立能力。
-
-重点实现：
-
-### Runtime
-
-负责整个 Cognitive Loop。
-
-### Context Builder
-
-根据 Goal 动态构建 Prompt / Context。
-
-### Memory Engine
-
-完成记忆写入、召回、生命周期和 Consolidation。
-
-### Event Store
-
-保存原始事件。
-
-### Experience Engine
-
-保存任务过程和结果。
-
-### Skill Engine
-
-负责 Skill 加载、生成、评价、升级。
-
-### Subagent Manager
-
-动态创建和管理 Agent。
-
-### Cognitive Router
-
-选择本地或云端模型。
-
-### Tool Runtime
-
-统一执行 MCP / CLI / API / UI Tool。
-
-### Permission Engine
-
-控制操作风险。
-
-### Evaluation Engine
-
-负责结果质量判断。
-
-### Reflection Engine
-
-负责经验转化。
-
----
-
-# 48. 本地部署形态
-
-最终建议专门运行一台 Jarvis Server：
-
-```text
-Jarvis Server
-
-├── Jarvis Runtime
-├── Local LLM
-├── Embedding Model
-├── Reranker
-├── Database
-├── Vector DB
-├── MCP Servers
-├── Plugin Runtime
-└── Background Workers
-```
-
-其他设备：
-
-```text
-Desktop
-Laptop
-Phone
-Tablet
-Browser
-Voice Device
-```
-
-只是 Jarvis 的客户端。
-
-因此：
-
-> Jarvis 不属于某一台电脑。
-
-Jarvis Server 才是长期存在的“数字大脑”。
-
----
-
-# 49. 多设备关系
-
-例如：
-
-```text
-                    Jarvis Server
-                          │
-        ┌─────────────────┼────────────────┐
-        │                 │                │
-     工作电脑            手机            家庭设备
-        │                 │                │
-      Agent             Voice         Home Assistant
-      Tools
-```
-
-服务器保存：
-
-```text
-Identity
-Memory
-Experience
-Skills
-Goals
-```
-
-设备只是执行端。
-
----
-
-# 50. 数据主权
-
-Jarvis 最重要的原则之一：
-
-> **所有关键认知资产必须能够完整导出。**
-
-至少能够导出：
-
-```text
-Memory
-Events
-Experience
-Skills
-Goals
-Workflow
-Agent Configuration
-Tool Configuration
-```
-
-即使未来整个 Runtime 重写：
-
-```text
-Jarvis V1
-↓
-Export Cognitive State
-↓
-Jarvis V2
-```
-
-仍然可以继承过去几年形成的经验。
-
----
-
-# 51. 最终系统闭环
-
-完整运行过程：
-
-```text
-用户 / 外部事件
-        ↓
-      Goal
-        ↓
-   Context Builder
-        ↓
- Memory Retrieval
-        ↓
- Skill Retrieval
-        ↓
-      Planning
-        ↓
-┌───────┴────────┐
-│                │
-Model          Subagent
-│                │
-└───────┬────────┘
-        ↓
-      Tools
-        ↓
-     Action
-        ↓
-     Result
-        ↓
-   Evaluation
-        ↓
-   Experience
-        ↓
-   Reflection
-        ↓
-┌───────┼────────────┐
-│       │            │
-Memory Skill      Goal/Self
-Update Candidate   Update
-│       │            │
-└───────┼────────────┘
-        ↓
-      Jarvis
-    持续成长
+Client
 ```
 
 ---
 
-# 52. 最终定义
+# 39. 推荐核心接口
 
-Jarvis Cognitive Memory Architecture 最终不是一个：
+最终核心领域接口建议保持非常干净：
 
-> LLM Wrapper。
+```ts
+interface ContextEngine {
+  build(input: BuildContextInput): Promise<ContextPackage>;
+}
+```
 
-也不是：
+```ts
+interface MemoryEngine {
+  recall(input: RecallInput): Promise<Memory[]>;
+  observe(input: Observation): Promise<void>;
+  consolidate(): Promise<void>;
+}
+```
 
-> Chatbot。
+```ts
+interface ExperienceEngine {
+  record(input: ExperienceInput): Promise<Experience>;
+}
+```
 
-更不是：
+```ts
+interface GoalEngine {
+  resolve(input: GoalContext): Promise<Goal>;
+  update(input: GoalUpdate): Promise<void>;
+}
+```
 
-> 某个 Agent Framework 的二次封装。
+```ts
+interface SkillEngine {
+  search(input: SkillQuery): Promise<Skill[]>;
+  evaluate(id: string): Promise<Evaluation>;
+}
+```
 
-它应该被定义为：
+```ts
+interface CognitiveRouter {
+  route(task: CognitiveTask): Promise<CognitiveProvider>;
+}
+```
 
-> **一个模型无关、以个人长期认知资产为核心，通过 Memory、Goals、Experience、Skills、Subagents、Tools、Evaluation 和 Reflection 形成持续认知闭环的 Personal Cognitive Runtime。**
+MCP、REST、CLI 都只调用这些领域接口。
 
-它真正需要长期保存的是：
+---
+
+# 40. 最终运行结构
+
+最终仓库运行起来应该类似：
 
 ```text
-我是谁
-你是谁
+jarvis-runtime
+     │
+     ├── HTTP :7330
+     │
+     ├── MCP :7331
+     │
+     ├── Worker
+     │
+     ├── PostgreSQL
+     │
+     ├── Memory Git Repo
+     │
+     └── Ollama
+```
 
-我知道什么
-我经历过什么
-我学会了什么
+客户端：
 
-我们正在做什么
+```text
+Codex
+Cursor
+Antigravity
+Claude Code
+其他 MCP Agent
+```
+
+统一：
+
+```text
+              MCP
+
+               ↓
+
+           Jarvis
+
+               ↓
+
+     Cognitive Memory
+```
+
+---
+
+# 41. 开发完成标准
+
+这套系统真正跑通，不应该以：
+
+> “MCP 能连上。”
+
+作为标准。
+
+而应该以以下场景作为验收：
+
+```text
+第一天：
+
+Codex 处理项目 A
+产生 Decision / Experience / Goal。
+
+
+第二天：
+
+重新启动电脑。
+
+打开 Cursor。
+
+完全新的 Cursor Session。
+
+说：
+
+“继续昨天 Codex 做的事情。”
+```
+
+Cursor 能准确知道：
+
+```text
+哪个项目
+
+昨天做了什么
+
 为什么这么做
 
-过去哪些方法成功
-哪些方法失败
+失败过什么
 
-我能够使用什么能力
+最后采用什么方案
 
-以及这些东西是如何逐渐形成的
+现在还剩什么
+
+应该加载什么 Skill
 ```
 
-模型只是：
+然后继续开发。
 
-> **当前用来思考的器官。**
+再换 Antigravity：
 
-Memory、Experience、Skills、Goals 和 Identity 才构成：
+```text
+“Review 一下昨天 Cursor 的修改。”
+```
 
-> **Jarvis 本身。**
+仍然可以无缝继续。
 
-最终目标不是打造一个“更好的 AI 聊天工具”。
+如果这个场景稳定成立：
 
-而是建立一个可以持续数年甚至更久，随着使用不断积累个人知识、经历、技能和工作方式，并且能够跨模型、跨设备、跨时代迁移的：
+> **JCMA 的核心就已经真正成立了。**
 
-# Personal Cognitive System
+---
+
+# 42. 最终定位
+
+整套系统的服务关系应该始终保持：
+
+```text
+       AI IDE / Agent
+
+            ↓
+
+      Cognitive Client
+
+            ↓
+
+         MCP / API
+
+            ↓
+
+    Jarvis Cognitive Runtime
+
+            ↓
+
+ Memory / Goal / Experience / Skill
+
+            ↓
+
+       Personal Cognitive State
+```
+
+所以未来无论：
+
+```text
+Codex 消失
+
+Cursor 被替代
+
+Antigravity 改架构
+
+GPT 换代
+
+LLM 被新的神经网络取代
+```
+
+都不会影响 Jarvis 的核心资产。
+
+因为真正需要保存的是：
+
+```text
+你的 Memory
+
+你的 Experience
+
+你的 Decisions
+
+你的 Goals
+
+你的 Skills
+
+你的 Workflow
+
+以及 Jarvis 对你的长期认知
+```
+
+**AI IDE 是工具。**
+
+**模型是算力。**
+
+**Jarvis 才是长期存在的认知主体。**
