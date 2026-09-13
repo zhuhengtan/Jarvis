@@ -1,15 +1,31 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import { JarvisRuntime } from "./runtime.js";
 import { loadLocalEnv } from "./env.js";
+import { adminRoutes } from "./routes/admin.js";
 
 await loadLocalEnv();
 const port = Number(process.env.JARVIS_PORT ?? 7330);
 const host = process.env.JARVIS_HOST ?? "127.0.0.1";
 const runtime = await JarvisRuntime.create({ assistantName: process.env.JARVIS_ASSISTANT_NAME?.trim() || undefined, memoryRoot: process.env.MEMORY_ROOT ? String(process.env.MEMORY_ROOT) : "data/memory", skillsRoot: process.env.SKILLS_ROOT ? String(process.env.SKILLS_ROOT) : "data/skills", databaseUrl: process.env.DATABASE_URL });
-const app = Fastify({ logger: true }); await app.register(cors, { origin: false });
-app.addHook("onRequest", async (request, reply) => { const token = process.env.JARVIS_API_TOKEN; if (token && request.headers.authorization !== `Bearer ${token}`) return reply.code(401).send({ error: "Unauthorized" }); });
+const app = Fastify({ logger: true });
+await app.register(cors, { origin: true });
+
+app.addHook("onRequest", async (request, reply) => {
+  if (request.url.startsWith("/v1/admin") || request.url === "/health" || !request.url.startsWith("/v1")) {
+    return;
+  }
+  const token = process.env.JARVIS_API_TOKEN;
+  if (token && request.headers.authorization !== `Bearer ${token}`) return reply.code(401).send({ error: "Unauthorized" });
+});
+
+await app.register(adminRoutes, { prefix: "/v1/admin", runtime });
+
 app.get("/health", async () => ({ status: "ok", assistantName: runtime.identity.assistantName ?? null, onboardingRequired: runtime.identity.onboardingRequired, onboardingQuestion: runtime.identity.onboardingRequired ? runtime.identity.onboardingQuestion : null }));
 app.get("/v1/capabilities", async () => runtime.selfCapabilities());
 app.put("/v1/identity/name", async (request) => runtime.setAssistantName(z.object({ name: z.string() }).parse(request.body).name));
@@ -28,4 +44,17 @@ app.post("/v1/events", async (request) => runtime.recordEvent(request.body));
 app.post("/v1/experiences", async (request) => runtime.recordExperience(request.body));
 app.post("/v1/agents", async (request) => { const body = z.object({ sessionId: z.string(), task: z.string().min(1) }).parse(request.body); return runtime.spawnAgent(body.sessionId, body.task); });
 app.post("/v1/sessions/:id/close", async (request) => runtime.closeSession({ ...(request.body as object), sessionId: (request.params as { id: string }).id }));
+
+const adminDist = join(dirname(fileURLToPath(import.meta.url)), "../../admin/dist");
+if (existsSync(adminDist)) {
+  await app.register(fastifyStatic, { root: adminDist, prefix: "/" });
+  app.setNotFoundHandler(async (request, reply) => {
+    if (request.raw.url && !request.raw.url.startsWith("/v1")) {
+      return reply.sendFile("index.html");
+    }
+    return reply.code(404).send({ error: "Not Found" });
+  });
+}
+
 await app.listen({ port, host });
+

@@ -1,0 +1,15 @@
+import { readFile } from "node:fs/promises";
+export async function loadLocalEnv(path = ".env") { try {
+    const raw = await readFile(path, "utf8");
+    for (const line of raw.split("\n")) {
+        const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+        if (!match || process.env[match[1]] !== undefined)
+            continue;
+        process.env[match[1]] = match[2].replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, "$1$2");
+    }
+}
+catch (error) {
+    if (error.code !== "ENOENT")
+        throw error;
+} }
+//# sourceMappingURL=env.js.map

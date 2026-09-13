@@ -5,5 +5,5 @@
   "type": "module",
   "exports": "./src/index.ts",
   "scripts": { "build": "tsc -p tsconfig.json", "check": "tsc --noEmit", "test": "vitest run" },
-  "dependencies": { "@jarvis/core": "workspace:*" }
+  "dependencies": { "@jarvis/core": "workspace:*", "@jarvis/shared": "workspace:*" }
 }

@@ -8,7 +8,7 @@ import { FilesystemSkillEngine } from "@jarvis/skills";
 import { ReflectionEngine } from "@jarvis/reflection";
 import { ToolGateway } from "@jarvis/tools";
 import { IdentityService } from "./identity.js";
-import { closeSessionInput, eventInput, experienceInput, goalInput, openSessionInput, buildContextInput, type MemoryRecord } from "@jarvis/shared";
+import { closeSessionInput, eventInput, experienceInput, goalInput, openSessionInput, buildContextInput, type MemoryRecord, type SkillBundle, type ProjectIdentity } from "@jarvis/shared";
 
 export interface RuntimeConfig { assistantName?: string; memoryRoot: string; skillsRoot: string; databaseUrl?: string; }
 
@@ -34,5 +34,57 @@ export class JarvisRuntime {
   async closeSession(input: unknown) { const value = closeSessionInput.parse(input); const experience = await this.recordExperience(value); await this.dynamic.closeSession(value.sessionId); return { closed: true, result: value.result, experience }; }
   async rememberCandidate(sessionId: string, input: Omit<MemoryRecord, "id" | "revision" | "status" | "createdAt" | "updatedAt" | "projectId"> & { scope: "global" | "project" }) { const session = await this.requireSession(sessionId); return this.memory.saveCandidate({ ...input, projectId: input.scope === "project" ? session.projectId : undefined }); }
   async promoteMemory(projectId: string, id: string, expectedRevision: number) { const record = (await this.memory.candidates(projectId)).find((item) => item.id === id); if (!record) throw new Error("Candidate memory not found in project scope"); return this.memory.promote({ record, expectedRevision }); }
+  async listSessions(filter?: { projectId?: string; status?: "active" | "closed"; limit?: number }) { return this.dynamic.listSessions(filter); }
+  async listProjects() { return this.dynamic.listProjects(); }
+  async allCandidates(projectId?: string) { return this.memory.candidates(projectId); }
+  async allMemories(projectId?: string) { return this.memory.allMemories(projectId); }
+  async updateCandidate(id: string, updates: Partial<Pick<MemoryRecord, "title" | "content" | "kind">>) { return this.memory.updateCandidate(id, updates); }
+  async archiveCandidate(id: string) { return this.memory.archiveCandidate(id); }
+  async promoteCandidate(id: string, expectedRevision: number) { const candidates = await this.memory.candidates(); const record = candidates.find((item) => item.id === id); if (!record) throw new Error("Candidate memory not found"); return this.memory.promote({ record, expectedRevision }); }
+  async overviewStats() {
+    const [sessions, candidates, memories, skills] = await Promise.all([
+      this.dynamic.listSessions({ limit: 100 }),
+      this.memory.candidates(),
+      this.memory.allMemories(),
+      this.skills.search("", 100),
+    ]);
+    const activeSessions = sessions.filter((s) => s.status === "active").length;
+    return {
+      activeSessions,
+      totalSessions: sessions.length,
+      pendingCandidates: candidates.length,
+      activeMemories: memories.filter((m) => m.status === "active").length,
+      totalSkills: skills.length,
+    };
+  }
+  async registerProject(input: { workspace: string; name?: string; initialGoal?: string }): Promise<ProjectIdentity> {
+    const project = await this.projects.register(input.workspace, input.name);
+    await this.dynamic.saveProject(project);
+    if (input.initialGoal?.trim()) {
+      await this.dynamic.saveGoal({ projectId: project.id, title: input.initialGoal.trim(), status: "active" });
+    }
+    return project;
+  }
+  async deleteProject(id: string) { return this.dynamic.deleteProject(id); }
+  async listProjectsDetailed() {
+    const projects = await this.dynamic.listProjects();
+    return Promise.all(
+      projects.map(async (p) => {
+        const [goals, memories] = await Promise.all([
+          this.dynamic.listGoals(p.id).catch(() => []),
+          this.memory.allMemories(p.id).catch(() => []),
+        ]);
+        return {
+          ...p,
+          goalsCount: goals.length,
+          memoriesCount: memories.length,
+          activeGoal: goals.find((g) => g.status === "active")?.title,
+        };
+      })
+    );
+  }
+  async loadSkillBundle(name: string) { return this.skills.loadBundle(name); }
+  async saveSkillBundle(bundle: SkillBundle) { return this.skills.saveBundle(bundle); }
+  async deleteSkill(name: string) { return this.skills.delete(name); }
   private async requireSession(id: string) { const session = await this.dynamic.getSession(id); if (!session) throw new Error("Session not found"); return session; }
 }

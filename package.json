@@ -6,11 +6,13 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "build": "pnpm -r build",
-    "dev": "pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker dev",
+    "dev": "pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker --filter @jarvis/admin dev",
     "start": "pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker start",
+    "admin": "pnpm --filter @jarvis/admin dev",
     "mcp": "pnpm --filter @jarvis/mcp stdio",
     "cli": "pnpm --filter @jarvis/cli start",
-    "test": "pnpm --filter @jarvis/memory test",
+    "prd": "pnpm -r build && pnpm start",
+    "test": "vitest run",
     "check": "pnpm -r check"
   },
   "devDependencies": { "@types/node": "^24.0.0", "tsx": "^4.20.0", "typescript": "^5.8.0", "vitest": "^3.2.0" }
