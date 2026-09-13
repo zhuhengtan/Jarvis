@@ -14,11 +14,11 @@ export default defineConfig({
     host: "0.0.0.0",
     proxy: {
       "/v1": {
-        target: process.env.JARVIS_API_URL || "http://127.0.0.1:7330",
+        target: process.env.JARVIS_API_URL || (process.env.JARVIS_PORT ? `http://127.0.0.1:${process.env.JARVIS_PORT}` : "http://127.0.0.1:7330"),
         changeOrigin: true,
       },
       "/mcp": {
-        target: "http://127.0.0.1:7331",
+        target: process.env.JARVIS_MCP_URL || (process.env.JARVIS_MCP_PORT ? `http://127.0.0.1:${process.env.JARVIS_MCP_PORT}` : "http://127.0.0.1:7331"),
         changeOrigin: true,
       },
     },

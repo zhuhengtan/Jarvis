@@ -9,6 +9,21 @@ export const closeSessionInput = experienceInput.extend({ result: z.enum(["succe
 export const adminLoginInput = z.object({ token: z.string().min(1) });
 export const updateCandidateInput = z.object({ title: z.string().min(1).optional(), content: z.string().min(1).optional(), kind: z.enum(memoryKinds).optional() });
 export const listSessionsInput = z.object({ projectId: z.string().optional(), status: z.enum(["active", "closed"]).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) });
+export const registerProjectInput = z.object({
+    workspace: z.string().min(1),
+    name: z.string().min(1).optional(),
+    initialGoal: z.string().min(1).optional(),
+});
+export const skillScriptInput = z.object({
+    filename: z.string().min(1).regex(/^[a-zA-Z0-9_.-]+$/, "文件名仅允许字母、数字、点、下划线与短横线"),
+    content: z.string(),
+});
+export const skillBundleInput = z.object({
+    name: z.string().min(1).regex(/^[a-zA-Z0-9_-]+$/, "技能标识仅允许英文字母、数字、下划线与短横线"),
+    description: z.string().optional(),
+    content: z.string(),
+    scripts: z.array(skillScriptInput).default([]),
+});
 export const now = () => new Date().toISOString();
 export const newId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 export function redactSecrets(value) { return value.replace(/(?:sk|pk|api)[_-][A-Za-z0-9_-]{12,}|(?:token|password|secret)\s*[:=]\s*[^\s,;]+/gi, "[REDACTED]"); }

@@ -6,14 +6,23 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "build": "pnpm -r build",
-    "dev": "pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker --filter @jarvis/admin dev",
+    "dev": "JARVIS_PORT=7430 JARVIS_MCP_PORT=7431 JARVIS_API_URL=http://127.0.0.1:7430 pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker --filter @jarvis/admin dev",
+    "dev:prd-ports": "pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker --filter @jarvis/admin dev",
     "start": "pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker start",
     "admin": "pnpm --filter @jarvis/admin dev",
     "mcp": "pnpm --filter @jarvis/mcp stdio",
     "cli": "pnpm --filter @jarvis/cli start",
+    "cli:dev": "JARVIS_API_URL=http://127.0.0.1:7430 pnpm cli",
     "prd": "pnpm -r build && pnpm start",
     "test": "vitest run",
-    "check": "pnpm -r check"
+    "check": "pnpm -r check",
+    "daemon:install": "bash scripts/daemon-manage.sh install",
+    "daemon:uninstall": "bash scripts/daemon-manage.sh uninstall",
+    "daemon:start": "bash scripts/daemon-manage.sh start",
+    "daemon:stop": "bash scripts/daemon-manage.sh stop",
+    "daemon:restart": "bash scripts/daemon-manage.sh restart",
+    "daemon:status": "bash scripts/daemon-manage.sh status",
+    "daemon:logs": "bash scripts/daemon-manage.sh logs"
   },
   "devDependencies": { "@types/node": "^24.0.0", "tsx": "^4.20.0", "typescript": "^5.8.0", "vitest": "^3.2.0" }
 }

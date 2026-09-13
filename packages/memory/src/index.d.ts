@@ -2,6 +2,7 @@ import type { MemoryEngine } from "@jarvis/core";
 import { type Event, type Experience, type Goal, type MemoryRecord, type MemoryScope, type MemoryStatus, type ProjectIdentity, type Session } from "@jarvis/shared";
 export declare class ProjectResolver {
     resolve(workspace: string): Promise<ProjectIdentity>;
+    register(workspace: string, name?: string): Promise<ProjectIdentity>;
 }
 export declare class MarkdownMemoryStore {
     private readonly root;
@@ -31,10 +32,9 @@ export interface DynamicStore {
     listGoals(projectId: string): Promise<Goal[]>;
     saveExperience(input: Omit<Experience, "id" | "createdAt">): Promise<Experience>;
     listExperiences(projectId: string, limit: number): Promise<Experience[]>;
-    listProjects(): Promise<{
-        id: string;
-        workspace: string;
-    }[]>;
+    saveProject(project: ProjectIdentity): Promise<void>;
+    deleteProject(id: string): Promise<void>;
+    listProjects(): Promise<ProjectIdentity[]>;
 }
 export declare class JsonlDynamicStore implements DynamicStore {
     private readonly root;
@@ -42,6 +42,7 @@ export declare class JsonlDynamicStore implements DynamicStore {
     private readonly events;
     private readonly goals;
     private readonly experiences;
+    private readonly projects;
     constructor(root: string);
     initialize(): Promise<void>;
     createSession(input: Omit<Session, "id" | "createdAt" | "updatedAt" | "status">): Promise<Session>;
@@ -87,10 +88,9 @@ export declare class JsonlDynamicStore implements DynamicStore {
         projectId: string;
     }>;
     listExperiences(projectId: string, limit: number): Promise<Experience[]>;
-    listProjects(): Promise<{
-        id: string;
-        workspace: string;
-    }[]>;
+    saveProject(project: ProjectIdentity): Promise<void>;
+    deleteProject(id: string): Promise<void>;
+    listProjects(): Promise<ProjectIdentity[]>;
     private persist;
 }
 export declare class PostgresDynamicStore implements DynamicStore {
@@ -143,10 +143,9 @@ export declare class PostgresDynamicStore implements DynamicStore {
         projectId: string;
     }>;
     listExperiences(projectId: string, limit: number): Promise<Experience[]>;
-    listProjects(): Promise<{
-        id: string;
-        workspace: string;
-    }[]>;
+    saveProject(project: ProjectIdentity): Promise<void>;
+    deleteProject(id: string): Promise<void>;
+    listProjects(): Promise<ProjectIdentity[]>;
     close(): Promise<void>;
 }
 export declare class FileMemoryEngine implements MemoryEngine {

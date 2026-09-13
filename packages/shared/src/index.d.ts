@@ -153,6 +153,34 @@ export declare const listSessionsInput: z.ZodObject<{
     }>>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strip>;
+export interface SkillScript {
+    filename: string;
+    content: string;
+}
+export interface SkillBundle {
+    name: string;
+    description?: string;
+    content: string;
+    scripts: SkillScript[];
+}
+export declare const registerProjectInput: z.ZodObject<{
+    workspace: z.ZodString;
+    name: z.ZodOptional<z.ZodString>;
+    initialGoal: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export declare const skillScriptInput: z.ZodObject<{
+    filename: z.ZodString;
+    content: z.ZodString;
+}, z.core.$strip>;
+export declare const skillBundleInput: z.ZodObject<{
+    name: z.ZodString;
+    description: z.ZodOptional<z.ZodString>;
+    content: z.ZodString;
+    scripts: z.ZodDefault<z.ZodArray<z.ZodObject<{
+        filename: z.ZodString;
+        content: z.ZodString;
+    }, z.core.$strip>>>;
+}, z.core.$strip>;
 export declare const now: () => string;
 export declare const newId: (prefix: string) => string;
 export declare function redactSecrets(value: string): string;

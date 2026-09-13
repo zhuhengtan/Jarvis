@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -12,7 +13,22 @@ import { adminRoutes } from "./routes/admin.js";
 await loadLocalEnv();
 const port = Number(process.env.JARVIS_PORT ?? 7330);
 const host = process.env.JARVIS_HOST ?? "127.0.0.1";
-const runtime = await JarvisRuntime.create({ assistantName: process.env.JARVIS_ASSISTANT_NAME?.trim() || undefined, memoryRoot: process.env.MEMORY_ROOT ? String(process.env.MEMORY_ROOT) : "data/memory", skillsRoot: process.env.SKILLS_ROOT ? String(process.env.SKILLS_ROOT) : "data/skills", databaseUrl: process.env.DATABASE_URL });
+
+const defaultJarvisHome = process.env.JARVIS_HOME?.trim() || join(homedir(), ".jarvis");
+const defaultMemoryRoot = join(defaultJarvisHome, "memory");
+const defaultSkillsRoot = existsSync(join(defaultJarvisHome, "memory", "skills"))
+  ? join(defaultJarvisHome, "memory", "skills")
+  : join(defaultJarvisHome, "skills");
+
+const memoryRoot = process.env.MEMORY_ROOT?.trim() ? String(process.env.MEMORY_ROOT).trim() : defaultMemoryRoot;
+const skillsRoot = process.env.SKILLS_ROOT?.trim() ? String(process.env.SKILLS_ROOT).trim() : defaultSkillsRoot;
+
+const runtime = await JarvisRuntime.create({
+  assistantName: process.env.JARVIS_ASSISTANT_NAME?.trim() || undefined,
+  memoryRoot,
+  skillsRoot,
+  databaseUrl: process.env.DATABASE_URL
+});
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
 
@@ -35,6 +51,7 @@ app.post("/v1/context/build", async (request) => runtime.buildContext(request.bo
 app.get("/v1/memory/search", async (request) => { const query = z.object({ projectId: z.string(), query: z.string(), limit: z.coerce.number().int().min(1).max(50).default(10) }).parse(request.query); return runtime.searchMemory(query.projectId, query.query, query.limit); });
 app.get("/v1/memory/candidates", async (request) => runtime.memoryCandidates(z.object({ projectId: z.string() }).parse(request.query).projectId));
 app.post("/v1/memory/:id/promote", async (request) => { const body = z.object({ projectId: z.string(), expectedRevision: z.number().int().positive() }).parse(request.body); return runtime.promoteMemory(body.projectId, (request.params as { id: string }).id, body.expectedRevision); });
+app.post("/v1/memory/:id/archive", async (request) => runtime.archiveCandidate((request.params as { id: string }).id));
 app.get("/v1/projects/:id/context", async (request) => runtime.projectContext((request.params as { id: string }).id));
 app.get("/v1/goals/active", async (request) => runtime.activeGoal(z.object({ projectId: z.string() }).parse(request.query).projectId));
 app.post("/v1/goals", async (request) => runtime.createGoal(request.body));

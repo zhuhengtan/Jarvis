@@ -3,6 +3,12 @@ import { join } from "node:path";
 import type { SkillEngine } from "@jarvis/core";
 import type { SkillBundle, SkillScript } from "@jarvis/shared";
 
+function extractSkillDescription(content: string): string {
+  const descMatch = content.match(/^description:\s*(.*?)$/m);
+  if (descMatch && descMatch[1].trim()) return descMatch[1].trim();
+  return content.split("\n").find((line) => line.trim() && !line.startsWith("#") && !line.startsWith("---") && !line.startsWith("name:"))?.trim() || "Jarvis skill";
+}
+
 export class FilesystemSkillEngine implements SkillEngine {
   constructor(private readonly root: string) {}
 
@@ -41,7 +47,7 @@ export class FilesystemSkillEngine implements SkillEngine {
       // scripts dir doesn't exist or is empty
     }
 
-    const description = content.split("\n").find((line) => line.trim() && !line.startsWith("#"))?.trim() || "Jarvis skill";
+    const description = extractSkillDescription(content);
     return { name, description, content, scripts };
   }
 
@@ -103,7 +109,7 @@ export class FilesystemSkillEngine implements SkillEngine {
         }
         return {
           name,
-          description: content.split("\n").find((line) => line.trim() && !line.startsWith("#"))?.trim() || "Jarvis skill",
+          description: extractSkillDescription(content),
           scriptCount,
         };
       })
