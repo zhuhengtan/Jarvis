@@ -39,7 +39,11 @@ export class ProjectResolver {
 
 export class MarkdownMemoryStore {
   constructor(private readonly root: string) {}
-  private path(record: MemoryRecord) { return join(this.root, record.scope === "global" ? "global" : "projects", record.projectId ?? "unassigned", `${record.id}.md`); }
+  private path(record: MemoryRecord) {
+    return record.scope === "global"
+      ? join(this.root, "global", `${record.id}.md`)
+      : join(this.root, "projects", record.projectId ?? "unassigned", `${record.id}.md`);
+  }
   async save(record: MemoryRecord): Promise<void> {
     const path = this.path(record); await mkdir(resolve(path, ".."), { recursive: true });
     const metadata = { id: record.id, revision: record.revision, scope: record.scope, project_id: record.projectId ?? null, kind: record.kind, status: record.status, source_refs: record.sourceRefs, created_at: record.createdAt, updated_at: record.updatedAt };
@@ -55,7 +59,12 @@ export class MarkdownMemoryStore {
     const globalRecords = await this.list("global");
     const projectsDir = join(this.root, "projects");
     let projectDirs: string[] = [];
-    try { projectDirs = await readdir(projectsDir); } catch { projectDirs = []; }
+    try {
+      const entries = await readdir(projectsDir, { withFileTypes: true });
+      projectDirs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+    } catch {
+      projectDirs = [];
+    }
     const projectRecords = (await Promise.all(projectDirs.map((dir) => this.list("project", dir)))).flat();
     const all = [...globalRecords, ...projectRecords];
     return status ? all.filter((item) => item.status === status) : all;

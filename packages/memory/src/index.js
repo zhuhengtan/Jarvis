@@ -52,7 +52,11 @@ export class MarkdownMemoryStore {
     constructor(root) {
         this.root = root;
     }
-    path(record) { return join(this.root, record.scope === "global" ? "global" : "projects", record.projectId ?? "unassigned", `${record.id}.md`); }
+    path(record) {
+        return record.scope === "global"
+            ? join(this.root, "global", `${record.id}.md`)
+            : join(this.root, "projects", record.projectId ?? "unassigned", `${record.id}.md`);
+    }
     async save(record) {
         const path = this.path(record);
         await mkdir(resolve(path, ".."), { recursive: true });
@@ -76,7 +80,8 @@ export class MarkdownMemoryStore {
         const projectsDir = join(this.root, "projects");
         let projectDirs = [];
         try {
-            projectDirs = await readdir(projectsDir);
+            const entries = await readdir(projectsDir, { withFileTypes: true });
+            projectDirs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
         }
         catch {
             projectDirs = [];

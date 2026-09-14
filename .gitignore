@@ -7,3 +7,5 @@ apps/server/data/
 *.local
 coverage/
 *.log
+*.test.js
+*.test.js.map

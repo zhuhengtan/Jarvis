@@ -91,7 +91,8 @@ export class FilesystemSkillEngine implements SkillEngine {
   private async all() {
     let entries: string[];
     try {
-      entries = await readdir(this.root);
+      const dirents = await readdir(this.root, { withFileTypes: true });
+      entries = dirents.filter((d) => d.isDirectory() || d.isSymbolicLink()).map((d) => d.name);
     } catch {
       return [];
     }

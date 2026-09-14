@@ -16,9 +16,7 @@ const host = process.env.JARVIS_HOST ?? "127.0.0.1";
 
 const defaultJarvisHome = process.env.JARVIS_HOME?.trim() || join(homedir(), ".jarvis");
 const defaultMemoryRoot = join(defaultJarvisHome, "memory");
-const defaultSkillsRoot = existsSync(join(defaultJarvisHome, "memory", "skills"))
-  ? join(defaultJarvisHome, "memory", "skills")
-  : join(defaultJarvisHome, "skills");
+const defaultSkillsRoot = join(defaultJarvisHome, "skills");
 
 const memoryRoot = process.env.MEMORY_ROOT?.trim() ? String(process.env.MEMORY_ROOT).trim() : defaultMemoryRoot;
 const skillsRoot = process.env.SKILLS_ROOT?.trim() ? String(process.env.SKILLS_ROOT).trim() : defaultSkillsRoot;
