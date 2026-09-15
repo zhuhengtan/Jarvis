@@ -17,6 +17,7 @@ export interface ContextPackage { session: Session; project: ProjectIdentity; ac
 
 export const openSessionInput = z.object({ client: z.string().min(1).max(80), workspace: z.string().min(1), task: z.string().min(1).max(10_000) });
 export const buildContextInput = z.object({ sessionId: z.string().min(1), task: z.string().min(1), tokenBudget: z.number().int().min(500).max(50_000).default(8_000) });
+export const retrieveContextInput = z.object({ client: z.string().min(1).max(80).default("open-webui"), workspace: z.string().min(1), task: z.string().min(1).max(10_000), tokenBudget: z.number().int().min(500).max(50_000).default(8_000) });
 export const eventInput = z.object({ sessionId: z.string().min(1), type: z.enum(["observation", "action", "result", "system"]), content: z.string().min(1).max(100_000) });
 export const experienceInput = z.object({ sessionId: z.string().min(1), summary: z.string().min(1).max(20_000), decisions: z.array(z.string().max(2_000)).default([]), failures: z.array(z.string().max(2_000)).default([]), nextSteps: z.array(z.string().max(2_000)).default([]) });
 export const goalInput = z.object({ projectId: z.string().min(1), title: z.string().min(1).max(2_000), status: z.enum(["active", "completed", "blocked"]).default("active") });
@@ -50,4 +51,3 @@ export const skillBundleInput = z.object({
 export const now = () => new Date().toISOString();
 export const newId = (prefix: string) => `${prefix}_${crypto.randomUUID()}`;
 export function redactSecrets(value: string): string { return value.replace(/(?:sk|pk|api)[_-][A-Za-z0-9_-]{12,}|(?:token|password|secret)\s*[:=]\s*[^\s,;]+/gi, "[REDACTED]"); }
-

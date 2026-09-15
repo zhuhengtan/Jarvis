@@ -8,7 +8,7 @@ import { FilesystemSkillEngine } from "@jarvis/skills";
 import { ReflectionEngine } from "@jarvis/reflection";
 import { ToolGateway } from "@jarvis/tools";
 import { IdentityService } from "./identity.js";
-import { closeSessionInput, eventInput, experienceInput, goalInput, openSessionInput, buildContextInput, type MemoryRecord, type SkillBundle, type ProjectIdentity } from "@jarvis/shared";
+import { closeSessionInput, eventInput, experienceInput, goalInput, openSessionInput, buildContextInput, retrieveContextInput, newId, now, type MemoryRecord, type SkillBundle, type ProjectIdentity } from "@jarvis/shared";
 
 export interface RuntimeConfig { assistantName?: string; memoryRoot: string; skillsRoot: string; databaseUrl?: string; }
 
@@ -18,6 +18,7 @@ export class JarvisRuntime {
   static async create(config: RuntimeConfig) { await Promise.all([mkdir(config.memoryRoot, { recursive: true }), mkdir(config.skillsRoot, { recursive: true })]); const dynamic: DynamicStore = config.databaseUrl ? new PostgresDynamicStore(config.databaseUrl) : new JsonlDynamicStore(resolve(config.memoryRoot, "..", "runtime")); await dynamic.initialize(); const identity = new IdentityService(join(resolve(config.memoryRoot, ".."), "identity.json"), config.assistantName); await identity.initialize(); return new JarvisRuntime(config, dynamic, identity); }
   async openSession(input: unknown) { const value = openSessionInput.parse(input); const project = await this.projects.resolve(value.workspace); const session = await this.dynamic.createSession({ projectId: project.id, workspace: project.workspace, client: value.client, task: value.task }); await this.memory.observe({ sessionId: session.id, type: "observation", content: value.task }); return { session, project, assistantName: this.identity.assistantName, onboarding: this.identity.onboardingRequired ? { required: true, question: this.identity.onboardingQuestion } : { required: false } }; }
   async buildContext(input: unknown) { const value = buildContextInput.parse(input); const session = await this.requireSession(value.sessionId); const project = await this.projects.resolve(session.workspace); return this.context.build({ session, project, task: value.task, tokenBudget: value.tokenBudget }); }
+  async retrieveContext(input: unknown) { const value = retrieveContextInput.parse(input); const project = await this.projects.resolve(value.workspace); const session = { id: newId("context"), projectId: project.id, workspace: project.workspace, client: value.client, task: value.task, status: "active" as const, createdAt: now(), updatedAt: now() }; return this.context.build({ session, project, task: value.task, tokenBudget: value.tokenBudget }); }
   async searchMemory(projectId: string, query: string, limit = 10) { return this.memory.recall({ projectId, query, limit }); }
   async memoryCandidates(projectId: string) { return this.memory.candidates(projectId); }
   async projectContext(projectId: string) { return { projectId, activeGoal: await this.dynamic.activeGoal(projectId), goals: await this.dynamic.listGoals(projectId), memories: await this.memory.recall({ projectId, query: "", limit: 30 }), recentEvents: await this.dynamic.recentEvents(projectId, 20), experiences: await this.dynamic.listExperiences(projectId, 20) }; }

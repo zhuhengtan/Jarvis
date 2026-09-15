@@ -46,6 +46,7 @@ app.put("/v1/identity/name", async (request) => runtime.setAssistantName(z.objec
 app.post("/v1/identity/interpret", async (request) => runtime.changeAssistantNameFromNaturalLanguage(z.object({ message: z.string() }).parse(request.body).message));
 app.post("/v1/sessions", async (request) => runtime.openSession(request.body));
 app.post("/v1/context/build", async (request) => runtime.buildContext(request.body));
+app.post("/v1/context/retrieve", async (request) => runtime.retrieveContext(request.body));
 app.get("/v1/memory/search", async (request) => { const query = z.object({ projectId: z.string(), query: z.string(), limit: z.coerce.number().int().min(1).max(50).default(10) }).parse(request.query); return runtime.searchMemory(query.projectId, query.query, query.limit); });
 app.get("/v1/memory/candidates", async (request) => runtime.memoryCandidates(z.object({ projectId: z.string() }).parse(request.query).projectId));
 app.post("/v1/memory/:id/promote", async (request) => { const body = z.object({ projectId: z.string(), expectedRevision: z.number().int().positive() }).parse(request.body); return runtime.promoteMemory(body.projectId, (request.params as { id: string }).id, body.expectedRevision); });
@@ -72,4 +73,3 @@ if (existsSync(adminDist)) {
 }
 
 await app.listen({ port, host });
-

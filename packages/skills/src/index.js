@@ -1,9 +1,28 @@
 import { readFile, readdir, writeFile, mkdir, rm, chmod } from "node:fs/promises";
 import { join } from "node:path";
 function extractSkillDescription(content) {
+    const yamlMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (yamlMatch) {
+        const frontmatter = yamlMatch[1];
+        const multilineDesc = frontmatter.match(/^description:\s*[>|]?\s*\r?\n((?:[ \t]+[^\r\n]*\r?\n?)+)/m);
+        if (multilineDesc) {
+            const parsed = multilineDesc[1]
+                .split(/\r?\n/)
+                .map((l) => l.trim())
+                .filter(Boolean)
+                .join(" ");
+            if (parsed)
+                return parsed;
+        }
+        const singleDesc = frontmatter.match(/^description:\s*(.+)$/m);
+        if (singleDesc && singleDesc[1].trim() && singleDesc[1].trim() !== ">" && singleDesc[1].trim() !== "|") {
+            return singleDesc[1].trim();
+        }
+    }
     const descMatch = content.match(/^description:\s*(.*?)$/m);
-    if (descMatch && descMatch[1].trim())
+    if (descMatch && descMatch[1].trim() && descMatch[1].trim() !== ">" && descMatch[1].trim() !== "|") {
         return descMatch[1].trim();
+    }
     return content.split("\n").find((line) => line.trim() && !line.startsWith("#") && !line.startsWith("---") && !line.startsWith("name:"))?.trim() || "Jarvis skill";
 }
 export class FilesystemSkillEngine {
