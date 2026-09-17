@@ -1,0 +1,7 @@
+- insert:
+    - id: jarvis-memory
+      name: '@jarvis/dsh-memory'
+      config:
+        apiUrl: http://127.0.0.1:7330
+        contextTokenBudget: 4000
+        autoCandidate: false
