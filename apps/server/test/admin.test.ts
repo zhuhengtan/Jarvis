@@ -74,6 +74,34 @@ describe("Admin API Routes", () => {
     expect(typeof data.activeSessions).toBe("number");
   });
 
+  it("reads and updates runtime settings and exposes RAG search", async () => {
+    const settingsRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/settings",
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(settingsRes.statusCode).toBe(200);
+    const settings = settingsRes.json();
+    expect(settings.embeddingModel).toBe("nomic-embed-text");
+
+    const updateRes = await app.inject({
+      method: "PUT",
+      url: "/v1/admin/settings",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { ...settings, embeddingProvider: "ollama", ragMinScore: 2 },
+    });
+    expect(updateRes.statusCode).toBe(200);
+    expect(updateRes.json().ragMinScore).toBe(2);
+
+    const ragRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/rag/search?query=",
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(ragRes.statusCode).toBe(200);
+    expect(Array.isArray(ragRes.json())).toBe(true);
+  });
+
   it("manages candidates: list, edit, and promote", async () => {
     // 1. Create a session & candidate
     const sessionRes = await runtime.openSession({
@@ -242,4 +270,3 @@ describe("Admin API Routes", () => {
     expect(delRes.json().success).toBe(true);
   });
 });
-

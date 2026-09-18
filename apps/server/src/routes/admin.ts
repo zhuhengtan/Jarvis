@@ -54,6 +54,15 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (app: F
       };
     });
 
+    protectedApp.get("/settings", async () => runtime.getSettings());
+    protectedApp.put("/settings", async (request) => runtime.updateSettings(request.body));
+    protectedApp.post("/settings/ollama/test", async () => runtime.testOllama());
+    protectedApp.post("/settings/embedding/test", async () => runtime.testEmbedding());
+    protectedApp.get("/rag/search", async (request) => {
+      const query = z.object({ projectId: z.string().optional(), query: z.string().default(""), limit: z.coerce.number().int().min(1).max(100).optional(), minScore: z.coerce.number().min(0).max(20).optional() }).parse(request.query);
+      return runtime.searchRag(query);
+    });
+
     // Candidates management
     protectedApp.get("/candidates", async (request) => {
       const query = z.object({ projectId: z.string().optional() }).parse(request.query);
@@ -77,6 +86,13 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (app: F
       const archived = await runtime.archiveCandidate(id);
       return { success: true, record: archived };
     });
+
+    protectedApp.post("/candidates/:id/reassign", async (request) => {
+      const { id } = request.params as { id: string };
+      const body = z.object({ projectId: z.string().min(1) }).parse(request.body);
+      return runtime.reassignCandidate(id, body.projectId);
+    });
+    protectedApp.post("/consolidate", async () => runtime.consolidateMemory());
 
     // Durable memories
     protectedApp.get("/memories", async (request) => {

@@ -6,7 +6,7 @@ import { FilesystemSkillEngine } from "@jarvis/skills";
 import { ReflectionEngine } from "@jarvis/reflection";
 import { ToolGateway } from "@jarvis/tools";
 import { IdentityService } from "./identity.js";
-import { type MemoryRecord, type SkillBundle, type ProjectIdentity } from "@jarvis/shared";
+import { type MemoryRecord, type SkillBundle, type ProjectIdentity, type RuntimeSettings } from "@jarvis/shared";
 export interface RuntimeConfig {
     assistantName?: string;
     memoryRoot: string;
@@ -25,6 +25,7 @@ export declare class JarvisRuntime {
     readonly agents: AgentManager;
     readonly tools: ToolGateway;
     readonly identity: IdentityService;
+    readonly settings: RuntimeSettings;
     private constructor();
     static create(config: RuntimeConfig): Promise<JarvisRuntime>;
     openSession(input: unknown): Promise<{
@@ -40,7 +41,66 @@ export declare class JarvisRuntime {
         };
     }>;
     buildContext(input: unknown): Promise<import("@jarvis/shared").ContextPackage>;
+    retrieveContext(input: unknown): Promise<import("@jarvis/shared").ContextPackage>;
     searchMemory(projectId: string, query: string, limit?: number): Promise<MemoryRecord[]>;
+    searchRag(input: {
+        projectId?: string;
+        query: string;
+        limit?: number;
+        minScore?: number;
+    }): Promise<{
+        record: MemoryRecord;
+        score: number;
+    }[]>;
+    getSettings(): Promise<RuntimeSettings>;
+    updateSettings(input: unknown): Promise<RuntimeSettings>;
+    testOllama(): Promise<{
+        ok: boolean;
+        provider: "none";
+        message: string;
+        baseUrl?: undefined;
+        model?: undefined;
+    } | {
+        ok: boolean;
+        provider: string;
+        baseUrl: string;
+        model: string;
+        message: string;
+    }>;
+    testEmbedding(): Promise<{
+        ok: boolean;
+        provider: "none";
+        message: string;
+        model?: undefined;
+        dimensions?: undefined;
+    } | {
+        ok: boolean;
+        provider: string;
+        model: string;
+        message: string;
+        dimensions?: undefined;
+    } | {
+        ok: boolean;
+        provider: string;
+        model: string;
+        dimensions: number;
+        message: string;
+    }>;
+    openMaintenanceSession(input: {
+        client: string;
+        task: string;
+    }): Promise<{
+        session: import("@jarvis/shared").Session;
+        project: ProjectIdentity;
+        assistantName: string | undefined;
+        onboarding: {
+            required: boolean;
+            question: string;
+        } | {
+            required: boolean;
+            question?: undefined;
+        };
+    }>;
     memoryCandidates(projectId: string): Promise<MemoryRecord[]>;
     projectContext(projectId: string): Promise<{
         projectId: string;
@@ -103,6 +163,9 @@ export declare class JarvisRuntime {
         kind: import("@jarvis/shared").MemoryKind;
         title: string;
         content: string;
+        summary?: string;
+        applicability?: string[];
+        verification?: string;
         sourceRefs: string[];
         createdAt: string;
     }>;
@@ -112,10 +175,16 @@ export declare class JarvisRuntime {
         limit?: number;
     }): Promise<import("@jarvis/shared").Session[]>;
     listProjects(): Promise<ProjectIdentity[]>;
+    private resolveProjectFromTask;
     allCandidates(projectId?: string): Promise<MemoryRecord[]>;
     allMemories(projectId?: string): Promise<MemoryRecord[]>;
     updateCandidate(id: string, updates: Partial<Pick<MemoryRecord, "title" | "content" | "kind">>): Promise<MemoryRecord>;
     archiveCandidate(id: string): Promise<MemoryRecord | undefined>;
+    reassignCandidate(id: string, projectId: string): Promise<MemoryRecord | undefined>;
+    consolidateMemory(): Promise<{
+        promoted: number;
+        archived: number;
+    }>;
     promoteCandidate(id: string, expectedRevision: number): Promise<{
         revision: number;
         status: "active";
@@ -126,6 +195,9 @@ export declare class JarvisRuntime {
         kind: import("@jarvis/shared").MemoryKind;
         title: string;
         content: string;
+        summary?: string;
+        applicability?: string[];
+        verification?: string;
         sourceRefs: string[];
         createdAt: string;
     }>;
@@ -139,6 +211,8 @@ export declare class JarvisRuntime {
     registerProject(input: {
         workspace: string;
         name?: string;
+        description?: string;
+        keywords?: string[];
         initialGoal?: string;
     }): Promise<ProjectIdentity>;
     deleteProject(id: string): Promise<void>;
@@ -150,6 +224,9 @@ export declare class JarvisRuntime {
         workspace: string;
         gitRemote?: string;
         name: string;
+        description?: string;
+        keywords?: string[];
+        workspaces?: string[];
     }[]>;
     loadSkillBundle(name: string): Promise<SkillBundle | undefined>;
     saveSkillBundle(bundle: SkillBundle): Promise<void>;
