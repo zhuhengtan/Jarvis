@@ -10,6 +10,9 @@ export interface MemoryRecord {
   kind: MemoryKind;
   title: string;
   content: string;
+  summary?: string;
+  applicability?: string[];
+  verification?: string;
   status: MemoryStatus;
   sourceRefs: string[];
   createdAt: string;
@@ -22,6 +25,7 @@ export interface Session {
   workspace: string;
   client: string;
   task: string;
+  mode?: "work" | "maintenance" | "unassigned";
   status: "active" | "closed";
   createdAt: string;
   updatedAt: string;
@@ -78,6 +82,9 @@ export interface ProjectDetail {
   workspace: string;
   name: string;
   gitRemote?: string;
+  description?: string;
+  keywords?: string[];
+  workspaces?: string[];
   goalsCount: number;
   memoriesCount: number;
   activeGoal?: string;
@@ -93,3 +100,21 @@ export interface OverviewStats {
   onboardingRequired: boolean;
   capabilities: string[];
 }
+
+export interface RuntimeSettings {
+  provider: "ollama" | "none";
+  ollamaBaseUrl: string;
+  ollamaModel: string;
+  embeddingProvider: "ollama" | "none";
+  embeddingBaseUrl: string;
+  embeddingModel: string;
+  ragMinScore: number;
+  ragMaxResults: number;
+  ragMemoryLimit: number;
+  ragRecentEventLimit: number;
+  ragSkillLimit: number;
+  ragIncludeGlobal: boolean;
+  autoConsolidation: boolean;
+}
+
+export interface RagResult { record: MemoryRecord; score: number; }

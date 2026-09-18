@@ -253,6 +253,14 @@ export const ProjectsPage: React.FC = () => {
             <Input placeholder="例如：Jarvis Core 或 Gorgeous Admin" />
           </Form.Item>
 
+          <Form.Item name="description" label="项目简介" extra="用于无工作区会话的自动归属判断。">
+            <Input.TextArea rows={2} placeholder="一句话说明项目用途、技术栈或主要模块" />
+          </Form.Item>
+
+          <Form.Item name="keywords" label="项目关键词" extra="多个关键词用逗号分隔，例如：Cocos, 自走棋, 战斗" getValueFromEvent={(event: React.ChangeEvent<HTMLInputElement>) => event.target.value.split(",").map((item) => item.trim()).filter(Boolean)}>
+            <Input placeholder="Cocos, RTS, memory" />
+          </Form.Item>
+
           <Form.Item
             name="initialGoal"
             label="设定首个活跃目标 (Initial Active Goal)"

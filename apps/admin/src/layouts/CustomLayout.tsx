@@ -24,6 +24,8 @@ import {
   LogoutOutlined,
   UserOutlined,
   FolderOpenOutlined,
+  SearchOutlined,
+  SettingOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useLocation, Outlet } from "react-router-dom";
 
@@ -81,6 +83,7 @@ export const CustomLayout: React.FC<CustomLayoutProps> = () => {
       icon: <InteractionOutlined />,
       label: "会话与观测",
     },
+    { key: "/rag", icon: <SearchOutlined />, label: "RAG 知识检索" },
     {
       key: "/goals",
       icon: <AimOutlined />,
@@ -96,6 +99,7 @@ export const CustomLayout: React.FC<CustomLayoutProps> = () => {
       icon: <RobotOutlined />,
       label: "助理与认知自省",
     },
+    { key: "/settings", icon: <SettingOutlined />, label: "运行设置" },
   ];
 
   // Map path to breadcrumbs
@@ -109,6 +113,8 @@ export const CustomLayout: React.FC<CustomLayoutProps> = () => {
       "/goals": ["控制台", "项目目标"],
       "/skills": ["控制台", "技能注册表"],
       "/identity": ["控制台", "助理与认知自省"],
+      "/rag": ["控制台", "RAG 知识检索"],
+      "/settings": ["控制台", "运行设置"],
     };
     return map[pathname] || ["控制台", "页面"];
   };

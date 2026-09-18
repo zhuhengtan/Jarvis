@@ -10,6 +10,8 @@ import { SessionsPage } from "../pages/sessions";
 import { GoalsPage } from "../pages/goals";
 import { SkillsPage } from "../pages/skills";
 import { IdentityPage } from "../pages/identity";
+import { RagPage } from "../pages/rag";
+import { SettingsPage } from "../pages/settings";
 
 // Auth Guard: ensure admin is authenticated
 const AuthGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -53,6 +55,7 @@ export const router = createBrowserRouter([
         path: "memory/explorer",
         element: <MemoryExplorerPage />,
       },
+      { path: "rag", element: <RagPage /> },
       {
         path: "sessions",
         element: <SessionsPage />,
@@ -69,6 +72,7 @@ export const router = createBrowserRouter([
         path: "identity",
         element: <IdentityPage />,
       },
+      { path: "settings", element: <SettingsPage /> },
       {
         path: "*",
         element: <Navigate to="/dashboard" replace />,

@@ -9,6 +9,8 @@ import type {
   OverviewStats,
   ProjectDetail,
   SkillBundle,
+  RuntimeSettings,
+  RagResult,
 } from "../types";
 
 const client = axios.create({
@@ -69,6 +71,11 @@ export const api = {
 
   // Overview
   getOverview: (): Promise<OverviewStats> => client.get("/overview"),
+  getSettings: (): Promise<RuntimeSettings> => client.get("/settings"),
+  updateSettings: (data: RuntimeSettings): Promise<RuntimeSettings> => client.put("/settings", data),
+  testOllama: (): Promise<{ ok: boolean; message: string; model?: string }> => client.post("/settings/ollama/test"),
+  testEmbedding: (): Promise<{ ok: boolean; message: string; model?: string; dimensions?: number }> => client.post("/settings/embedding/test"),
+  searchRag: (params: { query?: string; projectId?: string; minScore?: number; limit?: number }): Promise<RagResult[]> => client.get("/rag/search", { params }),
 
   // Candidates
   getCandidates: (projectId?: string): Promise<MemoryRecord[]> =>
@@ -84,6 +91,9 @@ export const api = {
 
   archiveCandidate: (id: string): Promise<{ success: boolean; record?: MemoryRecord }> =>
     client.post(`/candidates/${encodeURIComponent(id)}/archive`),
+
+  reassignCandidate: (id: string, projectId: string): Promise<MemoryRecord> =>
+    client.post(`/candidates/${encodeURIComponent(id)}/reassign`, { projectId }),
 
   // Memories
   getMemories: (projectId?: string, query?: string): Promise<MemoryRecord[]> =>
@@ -101,7 +111,7 @@ export const api = {
   // Projects
   getProjects: (): Promise<ProjectDetail[]> => client.get("/projects"),
 
-  createProject: (data: { workspace: string; name?: string; initialGoal?: string }): Promise<ProjectDetail> =>
+  createProject: (data: { workspace: string; name?: string; description?: string; keywords?: string[]; initialGoal?: string }): Promise<ProjectDetail> =>
     client.post("/projects", data),
 
   deleteProject: (id: string): Promise<{ success: boolean }> =>

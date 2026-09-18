@@ -1,0 +1,16 @@
+import React, { useEffect, useState } from "react";
+import { Button, Card, Descriptions, Drawer, Input, InputNumber, Select, Space, Table, Tag, Typography, message } from "antd";
+import type { ColumnsType } from "antd/es/table";
+import { api } from "../../services/api";
+import type { ProjectDetail, RagResult } from "../../types";
+
+export const RagPage: React.FC = () => {
+  const [projects, setProjects] = useState<ProjectDetail[]>([]); const [results, setResults] = useState<RagResult[]>([]); const [query, setQuery] = useState(""); const [projectId, setProjectId] = useState<string>(); const [minScore, setMinScore] = useState<number>(); const [limit, setLimit] = useState<number>(); const [selected, setSelected] = useState<RagResult>(); const [loading, setLoading] = useState(false);
+  useEffect(() => { api.getProjects().then(setProjects).catch((error) => message.error(error.message)); }, []);
+  const search = async () => { setLoading(true); try { setResults(await api.searchRag({ query, projectId, minScore, limit })); } catch (error: any) { message.error(error.message); } finally { setLoading(false); } };
+  const columns: ColumnsType<RagResult> = [{ title: "相关度", dataIndex: "score", width: 90, sorter: (a, b) => a.score - b.score, render: (score: number) => <Tag color={score >= 2 ? "green" : "gold"}>{score}</Tag> }, { title: "项目", render: (_, item) => item.record.projectId || "全局" }, { title: "类型", render: (_, item) => item.record.kind }, { title: "标题", render: (_, item) => <Button type="link" onClick={() => setSelected(item)}>{item.record.title}</Button> }, { title: "摘要", render: (_, item) => <Typography.Text ellipsis style={{ maxWidth: 420 }}>{item.record.summary || item.record.content}</Typography.Text> }];
+  return <Card title="RAG 知识检索" extra={<Space><Input placeholder="搜索知识、决策、故障或关键词" value={query} onChange={(event) => setQuery(event.target.value)} onPressEnter={search} style={{ width: 300 }} /><Select allowClear placeholder="全部项目" value={projectId} onChange={setProjectId} style={{ width: 180 }} options={projects.map((project) => ({ value: project.id, label: project.name }))} /><InputNumber min={0} max={20} placeholder="阈值" value={minScore} onChange={(value) => setMinScore(value ?? undefined)} /><InputNumber min={1} max={100} placeholder="条数" value={limit} onChange={(value) => setLimit(value ?? undefined)} /><Button type="primary" onClick={search}>搜索</Button></Space>}>
+    <Table rowKey={(item) => item.record.id} loading={loading} dataSource={results} columns={columns} pagination={{ pageSize: 20 }} />
+    <Drawer title="RAG 知识详情" width={680} open={Boolean(selected)} onClose={() => setSelected(undefined)}>{selected && <><Descriptions bordered column={1} size="small"><Descriptions.Item label="项目">{selected.record.projectId || "全局"}</Descriptions.Item><Descriptions.Item label="相关度">{selected.score}</Descriptions.Item><Descriptions.Item label="类型">{selected.record.kind}</Descriptions.Item><Descriptions.Item label="来源">{selected.record.sourceRefs.join(", ") || "无"}</Descriptions.Item><Descriptions.Item label="验证状态">{selected.record.verification || "未记录"}</Descriptions.Item></Descriptions><Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginTop: 16 }}>{selected.record.content}</Typography.Paragraph></>}</Drawer>
+  </Card>;
+};

@@ -25,7 +25,7 @@ import {
   EyeOutlined,
 } from "@ant-design/icons";
 import { api } from "../../services/api";
-import type { MemoryRecord, MemoryKind } from "../../types";
+import type { MemoryRecord, MemoryKind, ProjectDetail } from "../../types";
 
 const { Text } = Typography;
 const { Option } = Select;
@@ -46,17 +46,26 @@ export const CandidatesPage: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [isViewing, setIsViewing] = useState(false);
   const [form] = Form.useForm();
+  const [projects, setProjects] = useState<ProjectDetail[]>([]);
+  const [assignment, setAssignment] = useState<Record<string, string>>({});
 
   const loadCandidates = async () => {
     setLoading(true);
     try {
-      const data = await api.getCandidates();
-      setCandidates(data);
+      const [data, projectData] = await Promise.all([api.getCandidates(), api.getProjects()]);
+      setCandidates(data); setProjects(projectData);
     } catch (err: any) {
       message.error(err.message || "加载候选记忆失败");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleReassign = async (record: MemoryRecord) => {
+    const projectId = assignment[record.id];
+    if (!projectId) return message.warning("请选择目标项目");
+    try { await api.reassignCandidate(record.id, projectId); message.success("候选已重新归属"); loadCandidates(); }
+    catch (err: any) { message.error(err.message || "重新归属失败"); }
   };
 
   useEffect(() => {
@@ -145,7 +154,7 @@ export const CandidatesPage: React.FC = () => {
       ellipsis: true,
       render: (content: string) => (
         <span style={{ color: "#595959", fontFamily: "monospace" }}>
-          {content.slice(0, 100)}...
+          {(content || "").slice(0, 100)}{content.length > 100 ? "..." : ""}
         </span>
       ),
     },
@@ -205,6 +214,15 @@ export const CandidatesPage: React.FC = () => {
               提拔
             </Button>
           </Popconfirm>
+
+          {record.projectId === "unassigned" && (
+            <Space.Compact>
+              <Select size="small" placeholder="归属项目" style={{ width: 120 }} value={assignment[record.id]} onChange={(value) => setAssignment((current) => ({ ...current, [record.id]: value }))}>
+                {projects.map((project) => <Option key={project.id} value={project.id}>{project.name}</Option>)}
+              </Select>
+              <Button size="small" onClick={() => handleReassign(record)}>归属</Button>
+            </Space.Compact>
+          )}
 
           <Popconfirm
             title="确认归档此候选记忆？"
@@ -314,6 +332,8 @@ export const CandidatesPage: React.FC = () => {
                   <Text type="secondary">无明确来源引用</Text>
                 )}
               </Descriptions.Item>
+              {selectedRecord.summary && <Descriptions.Item label="摘要">{selectedRecord.summary}</Descriptions.Item>}
+              {selectedRecord.verification && <Descriptions.Item label="验证状态">{selectedRecord.verification}</Descriptions.Item>}
               <Descriptions.Item label="生成时间">
                 {new Date(selectedRecord.createdAt).toLocaleString("zh-CN")}
               </Descriptions.Item>
