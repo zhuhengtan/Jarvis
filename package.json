@@ -22,7 +22,8 @@
     "daemon:stop": "bash scripts/daemon-manage.sh stop",
     "daemon:restart": "bash scripts/daemon-manage.sh restart",
     "daemon:status": "bash scripts/daemon-manage.sh status",
-    "daemon:logs": "bash scripts/daemon-manage.sh logs"
+    "daemon:logs": "bash scripts/daemon-manage.sh logs",
+    "projects:audit": "node scripts/audit-projects.mjs"
   },
   "devDependencies": { "@types/node": "^24.0.0", "tsx": "^4.20.0", "typescript": "^5.8.0", "vitest": "^3.2.0" }
 }
