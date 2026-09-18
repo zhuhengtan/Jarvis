@@ -1,8 +1,13 @@
 import type { MemoryEngine } from "@jarvis/core";
 import { type Event, type Experience, type Goal, type MemoryRecord, type MemoryScope, type MemoryStatus, type ProjectIdentity, type Session } from "@jarvis/shared";
 export declare class ProjectResolver {
+    private normalizeRemote;
+    private metadataFor;
     resolve(workspace: string): Promise<ProjectIdentity>;
-    register(workspace: string, name?: string): Promise<ProjectIdentity>;
+    register(workspace: string, name?: string, details?: {
+        description?: string;
+        keywords?: string[];
+    }): Promise<ProjectIdentity>;
 }
 export declare class MarkdownMemoryStore {
     private readonly root;
@@ -13,6 +18,7 @@ export declare class MarkdownMemoryStore {
     listAll(status?: MemoryStatus): Promise<MemoryRecord[]>;
     get(id: string): Promise<MemoryRecord | undefined>;
     archive(id: string): Promise<MemoryRecord | undefined>;
+    reassign(id: string, projectId: string): Promise<MemoryRecord | undefined>;
     private parse;
 }
 export interface DynamicStore {
@@ -100,6 +106,7 @@ export declare class PostgresDynamicStore implements DynamicStore {
     migrate(): Promise<void>;
     createSession(input: Omit<Session, "id" | "createdAt" | "updatedAt" | "status">): Promise<{
         id: string;
+        mode: "work" | "maintenance" | "unassigned";
         status: "active";
         createdAt: string;
         updatedAt: string;
@@ -151,7 +158,26 @@ export declare class PostgresDynamicStore implements DynamicStore {
 export declare class FileMemoryEngine implements MemoryEngine {
     private readonly store;
     private readonly dynamic;
+    private minScore;
+    private maxResults;
+    private includeGlobal;
     constructor(store: MarkdownMemoryStore, dynamic: DynamicStore);
+    setMinScore(value: number): void;
+    setRetrievalConfig(config: {
+        minScore?: number;
+        maxResults?: number;
+        includeGlobal?: boolean;
+    }): void;
+    search({ projectId, query, limit, minScore, includeGlobal }: {
+        projectId?: string;
+        query: string;
+        limit: number;
+        minScore?: number;
+        includeGlobal?: boolean;
+    }): Promise<{
+        record: MemoryRecord;
+        score: number;
+    }[]>;
     recall({ projectId, query, limit }: {
         projectId: string;
         query: string;
@@ -171,6 +197,9 @@ export declare class FileMemoryEngine implements MemoryEngine {
         kind: import("@jarvis/shared").MemoryKind;
         title: string;
         content: string;
+        summary?: string;
+        applicability?: string[];
+        verification?: string;
         sourceRefs: string[];
         createdAt: string;
     }>;
@@ -183,4 +212,5 @@ export declare class FileMemoryEngine implements MemoryEngine {
     allMemories(projectId?: string): Promise<MemoryRecord[]>;
     updateCandidate(id: string, updates: Partial<Pick<MemoryRecord, "title" | "content" | "kind">>): Promise<MemoryRecord>;
     archiveCandidate(id: string): Promise<MemoryRecord | undefined>;
+    reassignCandidate(id: string, projectId: string): Promise<MemoryRecord | undefined>;
 }
