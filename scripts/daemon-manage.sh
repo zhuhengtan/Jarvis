@@ -46,6 +46,18 @@ check_port_conflicts() {
   fi
 }
 
+wait_for_ready() {
+  local attempt
+  for attempt in $(seq 1 10); do
+    if curl -fsS --connect-timeout 1 "http://127.0.0.1:${HTTP_PORT}/health" >/dev/null 2>&1 \
+      && lsof -ti :$MCP_PORT >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 generate_plist() {
   mkdir -p "$PLIST_DIR"
   mkdir -p "$LOG_DIR"
@@ -117,8 +129,8 @@ cmd_install() {
 
   check_port_conflicts "${1:-}"
 
-  echo -e "\n${BLUE}[1/4] Building Admin UI web assets (@jarvis/admin)...${NC}"
-  pnpm --filter @jarvis/admin build
+  echo -e "\n${BLUE}[1/4] Building runtime dist and Admin UI...${NC}"
+  pnpm build
 
   echo -e "\n${BLUE}[2/4] Generating LaunchAgent plist at ${PLIST_PATH}...${NC}"
   generate_plist
@@ -136,7 +148,7 @@ cmd_install() {
   fi
 
   echo -e "\n${BLUE}[4/4] Verifying daemon health...${NC}"
-  sleep 2
+  wait_for_ready || true
   cmd_status
   echo -e "\n${GREEN}${BOLD}Jarvis Daemon installed and registered successfully!${NC}"
   echo -e "Access Jarvis Cognitive Console at: ${BOLD}http://127.0.0.1:${HTTP_PORT}${NC}"
@@ -170,7 +182,7 @@ cmd_start() {
     launchctl bootout "$DOMAIN/${SERVICE_NAME}" 2>/dev/null || launchctl unload "$PLIST_PATH" 2>/dev/null || true
     launchctl bootstrap "$DOMAIN" "$PLIST_PATH" 2>/dev/null || launchctl load -w "$PLIST_PATH"
   fi
-  sleep 2
+  wait_for_ready || true
   cmd_status
 }
 

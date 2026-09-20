@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": { "jarvis": "./src/main.ts" },
-  "scripts": { "start": "tsx src/main.ts", "build": "tsc -p tsconfig.json", "check": "tsc --noEmit", "test": "vitest run" }
+  "bin": { "jarvis": "./jarvis.mjs" },
+  "scripts": { "start": "node ../../dist/cli.js", "build": "tsc -p tsconfig.json --noEmit", "check": "tsc --noEmit", "test": "vitest run" }
 }

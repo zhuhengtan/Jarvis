@@ -23,9 +23,10 @@ import {
   EditOutlined,
   ReloadOutlined,
   EyeOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
 import { api } from "../../services/api";
-import type { MemoryRecord, MemoryKind, ProjectDetail } from "../../types";
+import type { MemoryRecord, MemoryKind, ProjectDetail, RuntimeSettings } from "../../types";
 
 const { Text } = Typography;
 const { Option } = Select;
@@ -48,12 +49,14 @@ export const CandidatesPage: React.FC = () => {
   const [form] = Form.useForm();
   const [projects, setProjects] = useState<ProjectDetail[]>([]);
   const [assignment, setAssignment] = useState<Record<string, string>>({});
+  const [settings, setSettings] = useState<RuntimeSettings | null>(null);
+  const [autoReviewing, setAutoReviewing] = useState(false);
 
   const loadCandidates = async () => {
     setLoading(true);
     try {
-      const [data, projectData] = await Promise.all([api.getCandidates(), api.getProjects()]);
-      setCandidates(data); setProjects(projectData);
+      const [data, projectData, runtimeSettings] = await Promise.all([api.getCandidates(), api.getProjects(), api.getSettings()]);
+      setCandidates(data); setProjects(projectData); setSettings(runtimeSettings);
     } catch (err: any) {
       message.error(err.message || "加载候选记忆失败");
     } finally {
@@ -89,6 +92,19 @@ export const CandidatesPage: React.FC = () => {
       loadCandidates();
     } catch (err: any) {
       message.error(err.message || "归档失败");
+    }
+  };
+
+  const handleAutoReview = async () => {
+    setAutoReviewing(true);
+    try {
+      const result = await api.autoReviewCandidates();
+      message.success(`自动审查完成：提拔 ${result.promoted} 条，归档 ${result.archived} 条，保留 ${result.kept} 条${result.failed ? `，失败 ${result.failed} 条` : ""}`);
+      await loadCandidates();
+    } catch (err: any) {
+      message.error(err.message || "自动审查失败");
+    } finally {
+      setAutoReviewing(false);
     }
   };
 
@@ -253,13 +269,16 @@ export const CandidatesPage: React.FC = () => {
           </Space>
         }
         extra={
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={loadCandidates}
-            loading={loading}
-          >
-            刷新列表
-          </Button>
+          <Space>
+            {settings?.provider === "ollama" && settings.ollamaModel.trim() && (
+              <Button type="primary" icon={<RobotOutlined />} onClick={handleAutoReview} loading={autoReviewing}>
+                开始自动审查
+              </Button>
+            )}
+            <Button icon={<ReloadOutlined />} onClick={loadCandidates} loading={loading}>
+              刷新列表
+            </Button>
+          </Space>
         }
       >
         <Table

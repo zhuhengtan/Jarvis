@@ -1,3 +1,17 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+
+function findRepoRoot(start = dirname(fileURLToPath(import.meta.url))): string {
+  let dir = start;
+  while (true) {
+    if (existsSync(join(dir, "pnpm-workspace.yaml"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return start;
+    dir = parent;
+  }
+}
+
 const api = process.env.JARVIS_API_URL ?? "http://127.0.0.1:7330";
 const [command, subcommand, ...args] = process.argv.slice(2);
 const option = (name: string) => { const index = args.indexOf(name); return index < 0 ? undefined : args[index + 1]; };
@@ -5,7 +19,7 @@ const positionals = () => args.filter((value, index) => !value.startsWith("--") 
 const usage = `jarvis commands:\n  jarvis status | doctor\n  jarvis identity name <name>\n  jarvis identity say <natural-language request>\n  jarvis session open --client <name> --workspace <absolute path> --task <task>\n  jarvis memory search --project <id> <query>\n  jarvis project context --project <id>\n  jarvis goal create --project <id> --title <goal>\n  jarvis skill list <query>\n  jarvis mcp config --client <codex|cursor|antigravity> [--transport http|stdio]`;
 async function call(path: string, init?: RequestInit) { const response = await fetch(`${api}${path}`, { ...init, headers: { "content-type": "application/json", ...init?.headers } }); if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`); console.log(JSON.stringify(await response.json(), null, 2)); }
 function printMcpConfig(client: string, transport = "http") {
-  const stdio = { command: "pnpm", args: ["--dir", process.cwd(), "mcp"] }; const url = process.env.JARVIS_MCP_URL ?? "http://127.0.0.1:7331/mcp";
+  const stdio = { command: "node", args: [join(findRepoRoot(), "dist/mcp-stdio.js")] }; const url = process.env.JARVIS_MCP_URL ?? "http://127.0.0.1:7331/mcp";
   if (client === "codex") return console.log(transport === "stdio" ? `[mcp_servers.jarvis]\ncommand = "${stdio.command}"\nargs = ${JSON.stringify(stdio.args)}` : `[mcp_servers.jarvis]\nurl = "${url}"`);
   if (client === "cursor") return console.log(JSON.stringify({ mcpServers: { jarvis: transport === "stdio" ? stdio : { url } } }, null, 2));
   if (client === "antigravity") return console.log(JSON.stringify({ mcpServers: { jarvis: transport === "stdio" ? stdio : { serverUrl: url } } }, null, 2));

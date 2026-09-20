@@ -118,7 +118,7 @@ pnpm prd
 - **后台整理**：Worker 定期归档精确重复候选，并仅对有来源、足够完整且无冲突标记的项目候选自动提升；其余记录保留人工审核。
 - **技能中心**：查看当前已安装的 Jarvis Skills。
 - **RAG 知识检索**：在 `/rag` 按项目或全局搜索已生效记忆，查看相关度、摘要、完整内容与来源，并临时调整阈值和返回条数。
-- **运行设置**：在 `/settings` 管理 Ollama 生成模型与 Embedding Provider、地址、模型；可测试连接，并调整最低相关度、上下文注入数量、全局记忆开关与自动整理开关。当前 RAG 仍使用关键词召回，Embedding 配置用于健康检查和后续向量索引。
+- **运行设置**：在 `/settings` 管理 Ollama 生成模型与 Embedding Provider、地址、模型；可测试连接，并调整最低相关度、上下文注入数量、全局记忆开关与自动整理开关。启用 Embedding 后 RAG 使用关键词 + 向量 hybrid 召回；停用时回退为关键词。
 
 ### CLI 命令行工具
 
@@ -142,6 +142,11 @@ pnpm cli skill list memory
 pnpm cli mcp config --client cursor --transport stdio
 pnpm cli mcp config --client antigravity --transport stdio
 pnpm cli mcp config --client codex --transport http
+
+# 从当前 checkout 的唯一配置源同步已存在的 IDE 配置
+pnpm mcp:sync
+# 只预览将要修改的文件
+pnpm mcp:sync --dry-run
 ```
 
 > [!TIP]
@@ -196,6 +201,16 @@ Jarvis 提供了两种 MCP 协议传输通道：
 
 > **提示**：请将下方配置中的 `/PATH/TO/Jarvis` 替换为你本地 Jarvis 项目克隆的绝对路径（例如 `/Users/yourname/Documents/projects/github/Jarvis`）。
 
+### 推荐方式：一条命令同步
+
+仓库中的 [`config/mcp.json`](config/mcp.json) 是唯一配置源。它保存端口和各客户端的传输方式，脚本会自动把当前 checkout 的 `dist/mcp-stdio.js` 绝对路径写入已存在的 Codex、Cursor、Gemini/Antigravity 配置，并保留其它 MCP 服务。以后只需要修改这一个文件，再运行：
+
+```bash
+pnpm mcp:sync
+```
+
+### 手动配置（只在没有使用同步脚本时）
+
 ### 1. Google Antigravity
 编辑 `~/.gemini/antigravity/mcp_config.json`，在 `mcpServers` 下添加：
 
@@ -205,8 +220,7 @@ Jarvis 提供了两种 MCP 协议传输通道：
     "jarvis": {
       "command": "node",
       "args": [
-        "/PATH/TO/Jarvis/node_modules/tsx/dist/cli.mjs",
-        "/PATH/TO/Jarvis/apps/mcp/src/stdio.ts"
+        "/PATH/TO/Jarvis/dist/mcp-stdio.js"
       ],
       "env": {
         "JARVIS_API_URL": "http://127.0.0.1:7330"
@@ -225,8 +239,7 @@ Jarvis 提供了两种 MCP 协议传输通道：
     "jarvis": {
       "command": "node",
       "args": [
-        "/PATH/TO/Jarvis/node_modules/tsx/dist/cli.mjs",
-        "/PATH/TO/Jarvis/apps/mcp/src/stdio.ts"
+        "/PATH/TO/Jarvis/dist/mcp-stdio.js"
       ],
       "env": {
         "JARVIS_API_URL": "http://127.0.0.1:7330"
@@ -242,7 +255,7 @@ Jarvis 提供了两种 MCP 协议传输通道：
 
 ```bash
 # stdio 模式添加：
-claude mcp add jarvis -- node /PATH/TO/Jarvis/node_modules/tsx/dist/cli.mjs /PATH/TO/Jarvis/apps/mcp/src/stdio.ts
+claude mcp add jarvis -- node /PATH/TO/Jarvis/dist/mcp-stdio.js
 
 # 或 HTTP 模式添加：
 claude mcp add jarvis-http -- http://127.0.0.1:7331/mcp
@@ -257,8 +270,7 @@ claude mcp add jarvis-http -- http://127.0.0.1:7331/mcp
     "jarvis": {
       "command": "node",
       "args": [
-        "/PATH/TO/Jarvis/node_modules/tsx/dist/cli.mjs",
-        "/PATH/TO/Jarvis/apps/mcp/src/stdio.ts"
+        "/PATH/TO/Jarvis/dist/mcp-stdio.js"
       ],
       "env": {
         "JARVIS_API_URL": "http://127.0.0.1:7330"

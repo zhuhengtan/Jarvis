@@ -117,4 +117,12 @@ export interface RuntimeSettings {
   autoConsolidation: boolean;
 }
 
+export interface AutoReviewResult {
+  total: number;
+  promoted: number;
+  archived: number;
+  kept: number;
+  failed: number;
+}
+
 export interface RagResult { record: MemoryRecord; score: number; }

@@ -1265,7 +1265,7 @@ http://127.0.0.1:7331/mcp
 如果只支持 stdio：
 
 ```text
-node /path/to/jarvis/apps/mcp/dist/stdio.js
+node /path/to/jarvis/dist/mcp-stdio.js
 ```
 
 Jarvis 不需要知道：

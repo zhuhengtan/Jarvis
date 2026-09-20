@@ -1,47 +1,128 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Pool } from "pg";
 import type { MemoryEngine } from "@jarvis/core";
 import { newId, now, redactSecrets, type Event, type Experience, type Goal, type MemoryRecord, type MemoryScope, type MemoryStatus, type ProjectIdentity, type Session } from "@jarvis/shared";
+import { cosine, JsonEmbeddingIndex } from "./embeddings.js";
 
 const exec = promisify(execFile);
 const digest = (input: string) => createHash("sha256").update(input).digest("hex").slice(0, 20);
+
+export interface ProjectMetadata {
+  id?: string;
+  name?: string;
+  description?: string;
+  keywords?: string[];
+  workspaces?: string[];
+}
+
+export interface ContainedProject {
+  path: string;
+  name: string;
+  gitRemote?: string;
+  id?: string;
+  isGit?: boolean;
+}
+
+export interface ProjectResolution {
+  project: ProjectIdentity;
+  identityWarning?: string;
+  containedProjects?: ContainedProject[];
+}
 
 export class ProjectResolver {
   private normalizeRemote(remote?: string) {
     if (!remote) return undefined;
     return remote.trim().replace(/^git@([^:]+):/, "https://$1/").replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
   }
-  private async metadataFor(canonical: string): Promise<{ id?: string; name?: string; description?: string; keywords?: string[]; workspaces?: string[] }> {
+  private async metadataAt(dir: string): Promise<ProjectMetadata> {
+    try { return JSON.parse(await readFile(join(dir, ".jarvis", "project.json"), "utf8")) as ProjectMetadata; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; return {}; }
+  }
+  private async metadataFor(canonical: string): Promise<ProjectMetadata> {
     let current = canonical;
     while (true) {
-      try { return JSON.parse(await readFile(join(current, ".jarvis", "project.json"), "utf8")); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      const metadata = await this.metadataAt(current);
+      if (metadata.id || metadata.name || metadata.keywords || metadata.workspaces || metadata.description) return metadata;
       const parent = dirname(current); if (parent === current) return {};
       current = parent;
     }
   }
-  async resolve(workspace: string): Promise<ProjectIdentity> {
-    const canonical = resolve(workspace);
-    let gitRemote: string | undefined;
-    try { gitRemote = (await exec("git", ["-C", canonical, "config", "--get", "remote.origin.url"])).stdout.trim() || undefined; } catch { /* non-git workspaces are supported */ }
-    const metadata = await this.metadataFor(canonical);
+  private async gitRemote(dir: string): Promise<string | undefined> {
+    try { return (await exec("git", ["-C", dir, "config", "--get", "remote.origin.url"])).stdout.trim() || undefined; } catch { return undefined; }
+  }
+  private async gitToplevel(dir: string): Promise<string | undefined> {
+    try { return (await exec("git", ["-C", dir, "rev-parse", "--show-toplevel"])).stdout.trim() || undefined; } catch { return undefined; }
+  }
+  private async samePath(left: string, right: string) {
+    try { return (await realpath(left)) === (await realpath(right)); } catch { return resolve(left) === resolve(right); }
+  }
+  private identityFrom(workspace: string, metadata: ProjectMetadata, gitRemote?: string, extraWorkspaces: string[] = []): ProjectIdentity {
     const normalizedRemote = this.normalizeRemote(gitRemote);
-    const id = metadata.id?.trim() || `project_${digest(normalizedRemote || canonical)}`;
-    return { id, workspace: canonical, gitRemote: normalizedRemote, name: metadata.name?.trim() || basename(canonical) || "workspace", description: metadata.description, keywords: metadata.keywords, workspaces: metadata.workspaces };
+    const workspaces = [...new Set([...(metadata.workspaces ?? []), workspace, ...extraWorkspaces])];
+    return {
+      id: metadata.id?.trim() || `project_${digest(normalizedRemote || workspace)}`,
+      workspace,
+      gitRemote: normalizedRemote,
+      name: metadata.name?.trim() || basename(workspace) || "workspace",
+      description: metadata.description,
+      keywords: metadata.keywords,
+      workspaces: workspaces.length ? workspaces : undefined,
+    };
+  }
+  private async discoverNested(canonical: string): Promise<ContainedProject[]> {
+    let entries: Array<{ name: string; isDirectory(): boolean }>;
+    try { entries = await readdir(canonical, { withFileTypes: true }); } catch { return []; }
+    const nested: ContainedProject[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const path = join(canonical, entry.name);
+      const metadata = await this.metadataAt(path);
+      const toplevel = await this.gitToplevel(path);
+      const ownRepo = Boolean(toplevel && await this.samePath(toplevel, path));
+      const gitRemote = ownRepo ? this.normalizeRemote(await this.gitRemote(path)) : undefined;
+      if (!metadata.id && !ownRepo) continue;
+      nested.push({ path, name: metadata.name?.trim() || entry.name, gitRemote, id: metadata.id?.trim(), isGit: ownRepo });
+    }
+    return nested;
+  }
+  private bindNested(canonical: string, chosen: ContainedProject, metadata: ProjectMetadata): ProjectResolution {
+    return { project: this.identityFrom(canonical, metadata, chosen.gitRemote, [chosen.path]) };
+  }
+  async resolve(workspace: string): Promise<ProjectResolution> {
+    const canonical = resolve(workspace);
+    const metadata = await this.metadataFor(canonical);
+    const gitRemote = await this.gitRemote(canonical);
+    if (metadata.id?.trim() || gitRemote) return { project: this.identityFrom(canonical, metadata, gitRemote) };
+
+    const nested = await this.discoverNested(canonical);
+    const withMeta = nested.filter((item) => item.id);
+    if (withMeta.length === 1) return this.bindNested(canonical, withMeta[0], await this.metadataAt(withMeta[0].path));
+    const sameName = nested.filter((item) => basename(item.path) === basename(canonical) && item.isGit);
+    if (sameName.length === 1) return this.bindNested(canonical, sameName[0], await this.metadataAt(sameName[0].path));
+    const withGit = nested.filter((item) => item.isGit);
+    if (withGit.length === 1) return this.bindNested(canonical, withGit[0], await this.metadataAt(withGit[0].path));
+
+    const project = this.identityFrom(canonical, metadata);
+    if (nested.length > 1) {
+      return {
+        project,
+        identityWarning: "当前工作区包含多个嵌套项目，无法唯一归属。已按文件夹路径生成临时项目身份。请打开具体仓库，或在目标仓库写入 .jarvis/project.json。",
+        containedProjects: nested,
+      };
+    }
+    return { project };
   }
 
   async register(workspace: string, name?: string, details?: { description?: string; keywords?: string[] }): Promise<ProjectIdentity> {
     const canonical = resolve(workspace);
     await mkdir(canonical, { recursive: true });
-    let gitRemote: string | undefined;
-    try { gitRemote = (await exec("git", ["-C", canonical, "config", "--get", "remote.origin.url"])).stdout.trim() || undefined; } catch { /* non-git */ }
+    const gitRemote = await this.gitRemote(canonical);
     const jarvisDir = join(canonical, ".jarvis");
     await mkdir(jarvisDir, { recursive: true });
-    let metadata: { id?: string; name?: string; description?: string; keywords?: string[]; workspaces?: string[] } = {};
-    try { metadata = JSON.parse(await readFile(join(jarvisDir, "project.json"), "utf8")); } catch { /* ignore */ }
+    const metadata = await this.metadataAt(canonical);
     const normalizedRemote = this.normalizeRemote(gitRemote);
     const id = metadata.id?.trim() || `project_${digest(normalizedRemote || canonical)}`;
     const projectName = name?.trim() || metadata.name?.trim() || basename(canonical) || "workspace";
@@ -168,7 +249,7 @@ export class PostgresDynamicStore implements DynamicStore {
   async initialize() { await this.migrate(); }
   async migrate() { await this.pool.query(`CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS sessions (id text primary key, project_id text not null, workspace text not null, client text not null, task text not null, mode text not null default 'work', status text not null, created_at timestamptz not null, updated_at timestamptz not null); ALTER TABLE sessions ADD COLUMN IF NOT EXISTS mode text not null default 'work'; CREATE TABLE IF NOT EXISTS events (id text primary key, session_id text not null references sessions(id), type text not null, content text not null, occurred_at timestamptz not null); CREATE TABLE IF NOT EXISTS goals (id text primary key, project_id text not null, title text not null, status text not null, updated_at timestamptz not null); CREATE TABLE IF NOT EXISTS experiences (id text primary key, session_id text not null references sessions(id), project_id text not null, summary text not null, decisions jsonb not null, failures jsonb not null, next_steps jsonb not null, created_at timestamptz not null); CREATE TABLE IF NOT EXISTS projects (id text primary key, workspace text not null, name text not null, git_remote text, description text, keywords jsonb not null default '[]', workspaces jsonb not null default '[]'); ALTER TABLE projects ADD COLUMN IF NOT EXISTS description text; ALTER TABLE projects ADD COLUMN IF NOT EXISTS keywords jsonb not null default '[]'; ALTER TABLE projects ADD COLUMN IF NOT EXISTS workspaces jsonb not null default '[]'; CREATE INDEX IF NOT EXISTS events_session_idx ON events(session_id, occurred_at DESC); CREATE INDEX IF NOT EXISTS goals_project_idx ON goals(project_id, updated_at DESC); CREATE INDEX IF NOT EXISTS experiences_project_idx ON experiences(project_id, created_at DESC);`); }
   async createSession(input: Omit<Session, "id" | "createdAt" | "updatedAt" | "status">) { const session = { ...input, id: newId("session"), mode: input.mode ?? "work", status: "active" as const, createdAt: now(), updatedAt: now() }; await this.pool.query("INSERT INTO sessions (id,project_id,workspace,client,task,mode,status,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", [session.id, session.projectId, session.workspace, session.client, session.task, session.mode, session.status, session.createdAt, session.updatedAt]); return session; }
-  async getSession(id: string) { const row = (await this.pool.query("SELECT id, project_id AS \\\"projectId\\\", workspace, client, task, mode, status, created_at AS \\\"createdAt\\\", updated_at AS \\\"updatedAt\\\" FROM sessions WHERE id=$1", [id])).rows[0]; return row as Session | undefined; }
+  async getSession(id: string) { const row = (await this.pool.query(`SELECT id, project_id AS "projectId", workspace, client, task, mode, status, created_at AS "createdAt", updated_at AS "updatedAt" FROM sessions WHERE id=$1`, [id])).rows[0]; return row as Session | undefined; }
   async listSessions(query?: { projectId?: string; status?: "active" | "closed"; limit?: number }) {
     const conditions: string[] = []; const values: unknown[] = [];
     if (query?.projectId) { values.push(query.projectId); conditions.push(`project_id = $${values.length}`); }
@@ -180,12 +261,12 @@ export class PostgresDynamicStore implements DynamicStore {
   }
   async closeSession(id: string) { await this.pool.query("UPDATE sessions SET status='closed', updated_at=now() WHERE id=$1", [id]); }
   async appendEvent(input: Omit<Event, "id" | "occurredAt">) { const event = { ...input, id: newId("event"), occurredAt: now(), content: redactSecrets(input.content) }; await this.pool.query("INSERT INTO events VALUES ($1,$2,$3,$4,$5)", [event.id, event.sessionId, event.type, event.content, event.occurredAt]); return event; }
-  async recentEvents(projectId: string, limit: number) { const rows = (await this.pool.query("SELECT e.id,e.session_id AS \\\"sessionId\\\",e.type,e.content,e.occurred_at AS \\\"occurredAt\\\" FROM events e JOIN sessions s ON s.id=e.session_id WHERE s.project_id=$1 ORDER BY e.occurred_at DESC LIMIT $2", [projectId, limit])).rows; return rows as Event[]; }
+  async recentEvents(projectId: string, limit: number) { const rows = (await this.pool.query(`SELECT e.id,e.session_id AS "sessionId",e.type,e.content,e.occurred_at AS "occurredAt" FROM events e JOIN sessions s ON s.id=e.session_id WHERE s.project_id=$1 ORDER BY e.occurred_at DESC LIMIT $2`, [projectId, limit])).rows; return rows as Event[]; }
   async saveGoal(input: Omit<Goal, "id" | "updatedAt">) { const goal = { ...input, id: newId("goal"), updatedAt: now() }; await this.pool.query("UPDATE goals SET status='completed',updated_at=now() WHERE project_id=$1 AND status='active'", [goal.projectId]); await this.pool.query("INSERT INTO goals VALUES ($1,$2,$3,$4,$5)", [goal.id, goal.projectId, goal.title, goal.status, goal.updatedAt]); return goal; }
-  async activeGoal(projectId: string) { return (await this.pool.query("SELECT id, project_id AS \\\"projectId\\\", title, status, updated_at AS \\\"updatedAt\\\" FROM goals WHERE project_id=$1 AND status='active' ORDER BY updated_at DESC LIMIT 1", [projectId])).rows[0] as Goal | undefined; }
-  async listGoals(projectId: string) { return (await this.pool.query("SELECT id, project_id AS \\\"projectId\\\", title, status, updated_at AS \\\"updatedAt\\\" FROM goals WHERE project_id=$1 ORDER BY updated_at DESC", [projectId])).rows as Goal[]; }
+  async activeGoal(projectId: string) { return (await this.pool.query(`SELECT id, project_id AS "projectId", title, status, updated_at AS "updatedAt" FROM goals WHERE project_id=$1 AND status='active' ORDER BY updated_at DESC LIMIT 1`, [projectId])).rows[0] as Goal | undefined; }
+  async listGoals(projectId: string) { return (await this.pool.query(`SELECT id, project_id AS "projectId", title, status, updated_at AS "updatedAt" FROM goals WHERE project_id=$1 ORDER BY updated_at DESC`, [projectId])).rows as Goal[]; }
   async saveExperience(input: Omit<Experience, "id" | "createdAt">) { const experience = { ...input, id: newId("experience"), createdAt: now() }; await this.pool.query("INSERT INTO experiences VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [experience.id, experience.sessionId, experience.projectId, experience.summary, JSON.stringify(experience.decisions), JSON.stringify(experience.failures), JSON.stringify(experience.nextSteps), experience.createdAt]); return experience; }
-  async listExperiences(projectId: string, limit: number) { return (await this.pool.query("SELECT id, session_id AS \\\"sessionId\\\", project_id AS \\\"projectId\\\", summary, decisions, failures, next_steps AS \\\"nextSteps\\\", created_at AS \\\"createdAt\\\" FROM experiences WHERE project_id=$1 ORDER BY created_at DESC LIMIT $2", [projectId, limit])).rows as Experience[]; }
+  async listExperiences(projectId: string, limit: number) { return (await this.pool.query(`SELECT id, session_id AS "sessionId", project_id AS "projectId", summary, decisions, failures, next_steps AS "nextSteps", created_at AS "createdAt" FROM experiences WHERE project_id=$1 ORDER BY created_at DESC LIMIT $2`, [projectId, limit])).rows as Experience[]; }
   async saveProject(project: ProjectIdentity) {
     await this.pool.query(`INSERT INTO projects (id, workspace, name, git_remote, description, keywords, workspaces) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO UPDATE SET workspace=$2, name=$3, git_remote=$4, description=$5, keywords=$6, workspaces=$7`, [project.id, project.workspace, project.name, project.gitRemote ?? null, project.description ?? null, JSON.stringify(project.keywords ?? []), JSON.stringify(project.workspaces ?? [project.workspace])]);
   }
@@ -203,21 +284,65 @@ export class PostgresDynamicStore implements DynamicStore {
   async close() { await this.pool.end(); }
 }
 
+export { cosine, JsonEmbeddingIndex } from "./embeddings.js";
+
+export type MemoryEmbedder = { model: string; index: JsonEmbeddingIndex; embed: (texts: string[]) => Promise<number[][]> };
+const embeddingText = (record: MemoryRecord) => `${record.title} ${record.summary ?? ""} ${record.content}`;
+
 export class FileMemoryEngine implements MemoryEngine {
   private minScore = 0;
   private maxResults = 100;
   private includeGlobal = true;
+  private embedder?: MemoryEmbedder;
   constructor(private readonly store: MarkdownMemoryStore, private readonly dynamic: DynamicStore) {}
   setMinScore(value: number) { this.minScore = Math.max(0, value); }
   setRetrievalConfig(config: { minScore?: number; maxResults?: number; includeGlobal?: boolean }) { if (config.minScore !== undefined) this.minScore = Math.max(0, config.minScore); if (config.maxResults !== undefined) this.maxResults = Math.max(1, config.maxResults); if (config.includeGlobal !== undefined) this.includeGlobal = config.includeGlobal; }
+  setEmbedding(embedder?: MemoryEmbedder) { this.embedder = embedder; }
+  private async indexRecord(record: MemoryRecord) {
+    if (!this.embedder || record.status !== "active") return;
+    try {
+      const [vector] = await this.embedder.embed([embeddingText(record)]);
+      if (vector?.length) await this.embedder.index.upsert(record.id, this.embedder.model, vector);
+    } catch { /* keyword fallback remains available */ }
+  }
+  async backfillEmbeddings(limit = 32) {
+    if (!this.embedder) return 0;
+    const active = (await this.store.listAll()).filter((record) => record.status === "active");
+    const missing = await this.embedder.index.missing(active.map((record) => record.id), this.embedder.model);
+    const batch = missing.slice(0, Math.max(0, limit)).map((id) => active.find((record) => record.id === id)).filter((record): record is MemoryRecord => Boolean(record));
+    if (!batch.length) return 0;
+    try {
+      const vectors = await this.embedder.embed(batch.map(embeddingText));
+      await Promise.all(batch.map((record, index) => vectors[index]?.length ? this.embedder!.index.upsert(record.id, this.embedder!.model, vectors[index]) : Promise.resolve()));
+      return batch.length;
+    } catch { return 0; }
+  }
   async search({ projectId, query, limit, minScore = this.minScore, includeGlobal = this.includeGlobal }: { projectId?: string; query: string; limit: number; minScore?: number; includeGlobal?: boolean }) {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
     const records = (projectId ? [...(includeGlobal ? await this.store.list("global") : []), ...await this.store.list("project", projectId)] : await this.store.listAll()).filter((record) => record.status === "active" && (includeGlobal || record.scope !== "global"));
-    return records.map((record) => ({ record, score: terms.reduce((sum, term) => sum + Number(`${record.title} ${record.summary ?? ""} ${record.content} ${record.applicability?.join(" ") ?? ""}`.toLowerCase().includes(term)), 0) })).filter(({ score }) => !terms.length || score >= minScore).sort((left, right) => right.score - left.score || right.record.updatedAt.localeCompare(left.record.updatedAt)).slice(0, Math.min(limit, this.maxResults));
+    let queryVector: number[] | undefined;
+    if (this.embedder && terms.length) {
+      await this.backfillEmbeddings(32);
+      try { queryVector = (await this.embedder.embed([query]))[0]; } catch { queryVector = undefined; }
+    }
+    const scored = await Promise.all(records.map(async (record) => {
+      const haystack = `${record.title} ${record.summary ?? ""} ${record.content} ${record.applicability?.join(" ") ?? ""}`.toLowerCase();
+      const keyword = terms.reduce((sum, term) => sum + Number(haystack.includes(term)), 0);
+      const vector = queryVector && this.embedder ? await this.embedder.index.get(record.id, this.embedder.model) : undefined;
+      const score = keyword + (queryVector && vector ? cosine(queryVector, vector) * 10 : 0);
+      return { record, score };
+    }));
+    return scored.filter(({ score }) => !terms.length || score >= minScore).sort((left, right) => right.score - left.score || right.record.updatedAt.localeCompare(left.record.updatedAt)).slice(0, Math.min(limit, this.maxResults));
   }
   async recall({ projectId, query, limit }: { projectId: string; query: string; limit: number }) { return (await this.search({ projectId, query, limit })).map(({ record }) => record); }
   async observe(input: Omit<Event, "id" | "occurredAt">) { return this.dynamic.appendEvent(input); }
-  async promote({ record, expectedRevision }: { record: MemoryRecord; expectedRevision: number }) { if (record.revision !== expectedRevision) throw new Error("Memory revision conflict"); const active = { ...record, revision: record.revision + 1, status: "active" as const, updatedAt: now() }; await this.store.save(active); return active; }
+  async promote({ record, expectedRevision }: { record: MemoryRecord; expectedRevision: number }) {
+    if (record.revision !== expectedRevision) throw new Error("Memory revision conflict");
+    const active = { ...record, revision: record.revision + 1, status: "active" as const, updatedAt: now() };
+    await this.store.save(active);
+    await this.indexRecord(active);
+    return active;
+  }
   async consolidate() {
     const candidates = await this.store.listAll("candidate");
     const seen = new Map<string, MemoryRecord>(); let promoted = 0; let archived = 0;
@@ -254,6 +379,7 @@ export class FileMemoryEngine implements MemoryEngine {
       updatedAt: now(),
     };
     await this.store.save(updated);
+    await this.indexRecord(updated);
     return updated;
   }
   async archiveCandidate(id: string) {

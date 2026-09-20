@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "start": "tsx src/http.ts", "stdio": "tsx src/stdio.ts", "dev": "tsx watch src/http.ts", "build": "tsc -p tsconfig.json", "check": "tsc --noEmit", "test": "vitest run" },
+  "scripts": { "start": "node ../../dist/mcp-http.js", "stdio": "node ../../dist/mcp-stdio.js", "dev": "tsx watch src/http.ts", "build": "tsc -p tsconfig.json --noEmit", "check": "tsc --noEmit", "test": "vitest run" },
   "dependencies": { "@modelcontextprotocol/node": "^2.0.0", "@modelcontextprotocol/server": "^2.0.0", "zod": "^4.1.0" }
 }

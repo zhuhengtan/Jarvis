@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "tsx watch src/main.ts", "start": "tsx src/main.ts", "build": "tsc -p tsconfig.json", "check": "tsc --noEmit", "test": "vitest run" },
-  "dependencies": { "@jarvis/memory": "workspace:*" }
+  "scripts": { "dev": "tsx watch src/main.ts", "start": "node ../../dist/worker.js", "build": "tsc -p tsconfig.json --noEmit", "check": "tsc --noEmit", "test": "vitest run" },
+  "dependencies": { "@jarvis/memory": "workspace:*", "@jarvis/providers": "workspace:*" }
 }

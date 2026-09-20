@@ -2,18 +2,23 @@
   "name": "jarvis-cognitive-runtime",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@11.19.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm -r build && node scripts/build-runtime.mjs",
     "dev": "JARVIS_PORT=7430 JARVIS_MCP_PORT=7431 JARVIS_API_URL=http://127.0.0.1:7430 pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker --filter @jarvis/admin dev",
     "dev:prd-ports": "pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker --filter @jarvis/admin dev",
-    "start": "pnpm --parallel --filter @jarvis/server --filter @jarvis/mcp --filter @jarvis/worker start",
+    "start": "node scripts/start-runtime.mjs",
     "admin": "pnpm --filter @jarvis/admin dev",
-    "mcp": "pnpm --filter @jarvis/mcp stdio",
-    "cli": "pnpm --filter @jarvis/cli start",
-    "cli:dev": "JARVIS_API_URL=http://127.0.0.1:7430 pnpm cli",
-    "prd": "pnpm -r build && pnpm start",
+    "mcp": "node dist/mcp-stdio.js",
+    "mcp:sync": "node scripts/sync-mcp-configs.mjs",
+    "prompt:sync": "node scripts/sync-global-prompts.mjs",
+    "cli": "node dist/cli.js",
+    "cli:dev": "JARVIS_API_URL=http://127.0.0.1:7430 pnpm --filter @jarvis/cli exec tsx src/main.ts",
+    "prd": "pnpm build && pnpm start",
     "test": "vitest run",
     "check": "pnpm -r check",
     "daemon:install": "bash scripts/daemon-manage.sh install",
@@ -25,5 +30,20 @@
     "daemon:logs": "bash scripts/daemon-manage.sh logs",
     "projects:audit": "node scripts/audit-projects.mjs"
   },
-  "devDependencies": { "@types/node": "^24.0.0", "tsx": "^4.20.0", "typescript": "^5.8.0", "vitest": "^3.2.0" }
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@fastify/static": "^10.1.3",
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "fastify": "^5.12.4",
+    "pg": "^8.23.0",
+    "zod": "^4.6.2"
+  }
 }

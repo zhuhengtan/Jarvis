@@ -1,7 +1,20 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+export function findRepoRoot(start = dirname(fileURLToPath(import.meta.url))): string {
+  let dir = start;
+  while (true) {
+    if (existsSync(join(dir, "pnpm-workspace.yaml"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return start;
+    dir = parent;
+  }
+}
 
 /** Minimal dotenv reader: configuration remains explicit and no secret is written back to disk. */
-export async function loadLocalEnv(path = ".env") {
+export async function loadLocalEnv(path = join(findRepoRoot(), ".env")) {
   try {
     const raw = await readFile(path, "utf8");
     for (const line of raw.split("\n")) {

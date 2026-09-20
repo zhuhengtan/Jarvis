@@ -1,0 +1,6 @@
+{
+  "id": "jarvis",
+  "name": "Jarvis",
+  "description": "Jarvis Cognitive Memory Architecture (JCMA) — 独立于单一模型的个人认知运行时。",
+  "keywords": ["JCMA", "memory", "MCP", "cognitive-runtime"]
+}

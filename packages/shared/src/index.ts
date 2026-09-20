@@ -14,6 +14,10 @@ export interface Experience { id: string; sessionId: string; projectId: string; 
 export interface Evaluation { id: string; sessionId: string; projectId: string; score: number; rationale: string; createdAt: string; }
 export interface ActionAudit { id: string; sessionId: string; action: string; permission: string; outcome: "allowed" | "denied" | "completed" | "failed"; detail: string; createdAt: string; }
 export interface ContextPackage { session: Session; project: ProjectIdentity; activeGoal?: Goal; memories: MemoryRecord[]; recentEvents: Event[]; recommendedSkills: string[]; text: string; }
+export const extractedKinds = ["decision", "constraint", "fact", "workflow"] as const;
+export type ExtractedKind = (typeof extractedKinds)[number];
+export interface ExtractedFact { kind: ExtractedKind; title: string; content: string; }
+
 export interface RuntimeSettings { provider: "ollama" | "none"; ollamaBaseUrl: string; ollamaModel: string; embeddingProvider: "ollama" | "none"; embeddingBaseUrl: string; embeddingModel: string; ragMinScore: number; ragMaxResults: number; ragMemoryLimit: number; ragRecentEventLimit: number; ragSkillLimit: number; ragIncludeGlobal: boolean; autoConsolidation: boolean; }
 
 export const openSessionInput = z.object({ client: z.string().min(1).max(80), workspace: z.string().min(1), task: z.string().min(1).max(10_000), mode: z.enum(["work", "maintenance", "unassigned"]).default("work") });

@@ -10,6 +10,7 @@ import type {
   ProjectDetail,
   SkillBundle,
   RuntimeSettings,
+  AutoReviewResult,
   RagResult,
 } from "../types";
 
@@ -75,6 +76,7 @@ export const api = {
   updateSettings: (data: RuntimeSettings): Promise<RuntimeSettings> => client.put("/settings", data),
   testOllama: (): Promise<{ ok: boolean; message: string; model?: string }> => client.post("/settings/ollama/test"),
   testEmbedding: (): Promise<{ ok: boolean; message: string; model?: string; dimensions?: number }> => client.post("/settings/embedding/test"),
+  autoReviewCandidates: (): Promise<AutoReviewResult> => client.post("/candidates/auto-review"),
   searchRag: (params: { query?: string; projectId?: string; minScore?: number; limit?: number }): Promise<RagResult[]> => client.get("/rag/search", { params }),
 
   // Candidates

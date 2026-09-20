@@ -58,6 +58,7 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (app: F
     protectedApp.put("/settings", async (request) => runtime.updateSettings(request.body));
     protectedApp.post("/settings/ollama/test", async () => runtime.testOllama());
     protectedApp.post("/settings/embedding/test", async () => runtime.testEmbedding());
+    protectedApp.post("/candidates/auto-review", async () => runtime.autoReviewCandidates());
     protectedApp.get("/rag/search", async (request) => {
       const query = z.object({ projectId: z.string().optional(), query: z.string().default(""), limit: z.coerce.number().int().min(1).max(100).optional(), minScore: z.coerce.number().min(0).max(20).optional() }).parse(request.query);
       return runtime.searchRag(query);

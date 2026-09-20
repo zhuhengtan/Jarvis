@@ -1,0 +1,11 @@
+{
+  "name": "jarvis",
+  "apiUrl": "http://127.0.0.1:7330",
+  "mcpUrl": "http://127.0.0.1:7331/mcp",
+  "clients": {
+    "codex": "http",
+    "cursor": "stdio",
+    "gemini": "stdio",
+    "antigravity": "stdio"
+  }
+}
