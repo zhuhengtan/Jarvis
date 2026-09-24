@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, realpath, unlink, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Pool } from "pg";
 import type { MemoryEngine } from "@jarvis/core";
-import { newId, now, redactSecrets, type Event, type Experience, type Goal, type MemoryRecord, type MemoryScope, type MemoryStatus, type ProjectIdentity, type Session } from "@jarvis/shared";
+import { assertSafeId, confinedPath, atomicWriteFile, withFileLock, InvalidPathError, RevisionConflictError, newId, now, redactSecrets, type Event, type Experience, type Goal, type MemoryRecord, type MemoryScope, type MemoryStatus, type ProjectIdentity, type Session } from "@jarvis/shared";
 import { cosine, JsonEmbeddingIndex } from "./embeddings.js";
 
 const exec = promisify(execFile);
@@ -38,15 +38,28 @@ export class ProjectResolver {
     if (!remote) return undefined;
     return remote.trim().replace(/^git@([^:]+):/, "https://$1/").replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
   }
-  private async metadataAt(dir: string): Promise<ProjectMetadata> {
-    try { return JSON.parse(await readFile(join(dir, ".jarvis", "project.json"), "utf8")) as ProjectMetadata; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; return {}; }
+  private async canonicalPath(workspace: string): Promise<string> {
+    if (!isAbsolute(workspace)) throw new InvalidPathError("Workspace must be absolute");
+    try { return await realpath(workspace); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      return join(await this.canonicalPath(dirname(workspace)), basename(workspace));
+    }
   }
-  private async metadataFor(canonical: string): Promise<ProjectMetadata> {
+  private async metadataAt(dir: string): Promise<ProjectMetadata> {
+    try {
+      const metadata = JSON.parse(await readFile(join(dir, ".jarvis", "project.json"), "utf8")) as ProjectMetadata;
+      if (metadata.id !== undefined) assertSafeId(metadata.id);
+      if (["maintenance", "unassigned"].includes(metadata.id ?? "")) throw new InvalidPathError("Reserved project ID");
+      return metadata;
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; return {}; }
+  }
+  private async metadataFor(canonical: string, boundary?: string): Promise<ProjectMetadata> {
     let current = canonical;
     while (true) {
       const metadata = await this.metadataAt(current);
       if (metadata.id || metadata.name || metadata.keywords || metadata.workspaces || metadata.description) return metadata;
-      const parent = dirname(current); if (parent === current) return {};
+      const parent = dirname(current); if (parent === current || current === boundary) return {};
       current = parent;
     }
   }
@@ -54,16 +67,22 @@ export class ProjectResolver {
     try { return (await exec("git", ["-C", dir, "config", "--get", "remote.origin.url"])).stdout.trim() || undefined; } catch { return undefined; }
   }
   private async gitToplevel(dir: string): Promise<string | undefined> {
+    // Missing workspace descendants must still respect their containing repo boundary.
+    try { await realpath(dir); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && dirname(dir) !== dir) return this.gitToplevel(dirname(dir));
+      throw error;
+    }
     try { return (await exec("git", ["-C", dir, "rev-parse", "--show-toplevel"])).stdout.trim() || undefined; } catch { return undefined; }
   }
   private async samePath(left: string, right: string) {
     try { return (await realpath(left)) === (await realpath(right)); } catch { return resolve(left) === resolve(right); }
   }
-  private identityFrom(workspace: string, metadata: ProjectMetadata, gitRemote?: string, extraWorkspaces: string[] = []): ProjectIdentity {
+  private identityFrom(workspace: string, metadata: ProjectMetadata, gitRemote?: string, extraWorkspaces: string[] = [], identityRoot = workspace): ProjectIdentity {
     const normalizedRemote = this.normalizeRemote(gitRemote);
     const workspaces = [...new Set([...(metadata.workspaces ?? []), workspace, ...extraWorkspaces])];
     return {
-      id: metadata.id?.trim() || `project_${digest(normalizedRemote || workspace)}`,
+      id: metadata.id?.trim() || `project_${digest(normalizedRemote || identityRoot)}`,
       workspace,
       gitRemote: normalizedRemote,
       name: metadata.name?.trim() || basename(workspace) || "workspace",
@@ -89,13 +108,15 @@ export class ProjectResolver {
     return nested;
   }
   private bindNested(canonical: string, chosen: ContainedProject, metadata: ProjectMetadata): ProjectResolution {
-    return { project: this.identityFrom(canonical, metadata, chosen.gitRemote, [chosen.path]) };
+    return { project: this.identityFrom(canonical, metadata, chosen.gitRemote, [chosen.path], chosen.path) };
   }
   async resolve(workspace: string): Promise<ProjectResolution> {
-    const canonical = resolve(workspace);
-    const metadata = await this.metadataFor(canonical);
-    const gitRemote = await this.gitRemote(canonical);
-    if (metadata.id?.trim() || gitRemote) return { project: this.identityFrom(canonical, metadata, gitRemote) };
+    const canonical = await this.canonicalPath(workspace);
+    const toplevel = await this.gitToplevel(canonical);
+    const boundary = toplevel ? await this.canonicalPath(toplevel) : undefined;
+    const metadata = await this.metadataFor(canonical, boundary);
+    const gitRemote = await this.gitRemote(boundary ?? canonical);
+    if (metadata.id?.trim() || gitRemote || boundary) return { project: this.identityFrom(canonical, metadata, gitRemote, boundary ? [boundary] : [], boundary) };
 
     const nested = await this.discoverNested(canonical);
     const withMeta = nested.filter((item) => item.id);
@@ -117,14 +138,14 @@ export class ProjectResolver {
   }
 
   async register(workspace: string, name?: string, details?: { description?: string; keywords?: string[] }): Promise<ProjectIdentity> {
-    const canonical = resolve(workspace);
+    const canonical = await this.canonicalPath(workspace);
     await mkdir(canonical, { recursive: true });
     const gitRemote = await this.gitRemote(canonical);
     const jarvisDir = join(canonical, ".jarvis");
     await mkdir(jarvisDir, { recursive: true });
     const metadata = await this.metadataAt(canonical);
     const normalizedRemote = this.normalizeRemote(gitRemote);
-    const id = metadata.id?.trim() || `project_${digest(normalizedRemote || canonical)}`;
+    const id = metadata.id?.trim() || (await this.resolve(canonical)).project.id;
     const projectName = name?.trim() || metadata.name?.trim() || basename(canonical) || "workspace";
     const description = details?.description?.trim() || metadata.description;
     const keywords = details?.keywords?.map((item) => item.trim()).filter(Boolean) || metadata.keywords || [];
@@ -136,60 +157,87 @@ export class ProjectResolver {
 
 export class MarkdownMemoryStore {
   constructor(private readonly root: string) {}
-  private path(record: MemoryRecord) {
-    return record.scope === "global"
-      ? join(this.root, "global", `${record.id}.md`)
-      : join(this.root, "projects", record.projectId ?? "unassigned", `${record.id}.md`);
+  private async path(record: MemoryRecord) {
+    assertSafeId(record.id);
+    if (record.scope === "global") return confinedPath(this.root, "global", `${record.id}.md`);
+    if (record.scope !== "project" || !record.projectId) throw new InvalidPathError("Project memory requires a safe project ID");
+    assertSafeId(record.projectId);
+    return confinedPath(this.root, "projects", record.projectId, `${record.id}.md`);
   }
-  async save(record: MemoryRecord): Promise<void> {
-    const path = this.path(record); await mkdir(resolve(path, ".."), { recursive: true });
+  private async write(record: MemoryRecord): Promise<void> {
+    const path = await this.path(record);
+    if (!record.title.trim() || /[\r\n]/.test(record.title)) throw new InvalidPathError("Memory title must be a single nonempty line");
+    await mkdir(dirname(path), { recursive: true });
     const metadata = { id: record.id, revision: record.revision, scope: record.scope, project_id: record.projectId ?? null, kind: record.kind, status: record.status, source_refs: record.sourceRefs, summary: record.summary ?? null, applicability: record.applicability ?? [], verification: record.verification ?? null, created_at: record.createdAt, updated_at: record.updatedAt };
-    await writeFile(path, `---\n${Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n")}\n---\n\n# ${record.title}\n\n${record.content}\n`, "utf8");
+    await atomicWriteFile(path, `---\n${Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n")}\n---\n\n# ${record.title}\n\n${record.content}\n`);
+  }
+  /** New candidates only. Existing records must go through revision-checked mutate. */
+  async save(record: MemoryRecord): Promise<void> {
+    await this.path(record);
+    await withFileLock(this.root, "memory-write-lock", async () => {
+      if (record.status !== "candidate" || record.revision !== 1 || await this.get(record.id)) throw new RevisionConflictError("Memory already exists or is not a new candidate");
+      await this.write(record);
+    });
+  }
+  async mutate(id: string, expectedRevision: number | undefined, change: (record: MemoryRecord) => MemoryRecord): Promise<MemoryRecord> {
+    assertSafeId(id);
+    return withFileLock(this.root, "memory-write-lock", async () => {
+      const current = await this.get(id);
+      if (!current) throw new RevisionConflictError("Memory no longer exists");
+      if (expectedRevision !== undefined && current.revision !== expectedRevision) throw new RevisionConflictError("Memory revision conflict; reload before retrying");
+      const next = { ...change(current), id: current.id, revision: current.revision + 1, updatedAt: now() };
+      const previousPath = await this.path(current);
+      const nextPath = await this.path(next);
+      await this.write(next);
+      if (previousPath !== nextPath) await unlink(previousPath);
+      return next;
+    });
   }
   async list(scope: MemoryScope, projectId?: string): Promise<MemoryRecord[]> {
-    const folder = scope === "global" ? join(this.root, "global") : join(this.root, "projects", projectId ?? "");
-    let files: string[]; try { files = (await readdir(folder)).filter((file) => file.endsWith(".md")); } catch { return []; }
-    const parsed = await Promise.all(files.map(async (file) => this.parse(join(folder, file))));
+    if (projectId !== undefined) assertSafeId(projectId);
+    const folder = scope === "global" ? await confinedPath(this.root, "global") : await confinedPath(this.root, "projects", ...(projectId ? [projectId] : []));
+    let files: string[];
+    try { files = (await readdir(folder, { withFileTypes: true })).filter((file) => file.isFile() && file.name.endsWith(".md")).map(file => file.name); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+    const parsed = await Promise.all(files.map(async (file) => this.parse(await confinedPath(folder, file))));
     return parsed.filter((item): item is MemoryRecord => Boolean(item));
   }
   async listAll(status?: MemoryStatus): Promise<MemoryRecord[]> {
     const globalRecords = await this.list("global");
-    const projectsDir = join(this.root, "projects");
+    const projectsDir = await confinedPath(this.root, "projects");
     let projectDirs: string[] = [];
-    try {
-      const entries = await readdir(projectsDir, { withFileTypes: true });
-      projectDirs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-    } catch {
-      projectDirs = [];
-    }
-    const projectRecords = (await Promise.all(projectDirs.map((dir) => this.list("project", dir)))).flat();
+    try { projectDirs = (await readdir(projectsDir, { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    const projectRecords = (await Promise.all(projectDirs.map(dir => this.list("project", dir)))).flat();
     const all = [...globalRecords, ...projectRecords];
-    return status ? all.filter((item) => item.status === status) : all;
+    return status ? all.filter(item => item.status === status) : all;
   }
   async get(id: string): Promise<MemoryRecord | undefined> {
-    const all = await this.listAll();
-    return all.find((item) => item.id === id);
+    assertSafeId(id);
+    const matches = (await this.listAll()).filter(item => item.id === id);
+    if (matches.length > 1) throw new RevisionConflictError("Duplicate memory ID; resolve storage conflict before writing");
+    return matches[0];
   }
-  async archive(id: string): Promise<MemoryRecord | undefined> {
-    const record = await this.get(id);
-    if (!record) return undefined;
-    const archived: MemoryRecord = { ...record, status: "archived", updatedAt: now() };
-    await this.save(archived);
-    return archived;
+  async archive(id: string, expectedRevision?: number): Promise<MemoryRecord> {
+    return this.mutate(id, expectedRevision, record => ({ ...record, status: "archived" }));
   }
-  async reassign(id: string, projectId: string): Promise<MemoryRecord | undefined> {
-    const record = await this.get(id); if (!record || record.scope !== "project" || record.status !== "candidate") return undefined;
-    if (record.projectId === projectId) return record;
-    const moved: MemoryRecord = { ...record, projectId, updatedAt: now() };
-    await this.save(moved);
-    try { await unlink(this.path(record)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    return moved;
+  async reassign(id: string, projectId: string, expectedRevision?: number): Promise<MemoryRecord> {
+    assertSafeId(projectId);
+    return this.mutate(id, expectedRevision, record => {
+      if (record.scope !== "project" || record.status !== "candidate") throw new RevisionConflictError("Only candidate project memories can be reassigned");
+      return { ...record, projectId, applicability: [...(record.applicability ?? []).filter(item => !item.startsWith("project:")), `project:${projectId}`] };
+    });
   }
   private async parse(path: string): Promise<MemoryRecord | undefined> {
-    const raw = await readFile(path, "utf8"); const match = raw.match(/^---\n([\s\S]*?)\n---\n\n# (.*?)\n\n([\s\S]*?)\n?$/);
+    let raw: string;
+    try { raw = await readFile(path, "utf8"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+    const match = raw.match(/^---\n([\s\S]*?)\n---\n\n# (.*?)\n\n([\s\S]*?)\n?$/);
     if (!match) return undefined;
-    const attributes = Object.fromEntries(match[1].split("\n").map((line) => { const index = line.indexOf(": "); return [line.slice(0, index), JSON.parse(line.slice(index + 2))]; }));
-    return { id: attributes.id, revision: attributes.revision, scope: attributes.scope, projectId: attributes.project_id ?? undefined, kind: attributes.kind, status: attributes.status, sourceRefs: attributes.source_refs ?? [], summary: attributes.summary ?? undefined, applicability: attributes.applicability ?? [], verification: attributes.verification ?? undefined, createdAt: attributes.created_at, updatedAt: attributes.updated_at, title: match[2], content: match[3] };
+    const attributes = Object.fromEntries(match[1].split("\n").map(line => { const index = line.indexOf(": "); return [line.slice(0, index), JSON.parse(line.slice(index + 2))]; }));
+    const record: MemoryRecord = { id: attributes.id, revision: attributes.revision, scope: attributes.scope, projectId: attributes.project_id ?? undefined, kind: attributes.kind, status: attributes.status, sourceRefs: attributes.source_refs ?? [], summary: attributes.summary ?? undefined, applicability: attributes.applicability ?? [], verification: attributes.verification ?? undefined, createdAt: attributes.created_at, updatedAt: attributes.updated_at, title: match[2], content: match[3] };
+    if (await this.path(record) !== resolve(path)) throw new InvalidPathError("Memory metadata does not match its storage path");
+    return record;
   }
 }
 
@@ -299,62 +347,74 @@ export class FileMemoryEngine implements MemoryEngine {
   setRetrievalConfig(config: { minScore?: number; maxResults?: number; includeGlobal?: boolean }) { if (config.minScore !== undefined) this.minScore = Math.max(0, config.minScore); if (config.maxResults !== undefined) this.maxResults = Math.max(1, config.maxResults); if (config.includeGlobal !== undefined) this.includeGlobal = config.includeGlobal; }
   setEmbedding(embedder?: MemoryEmbedder) { this.embedder = embedder; }
   private async indexRecord(record: MemoryRecord) {
-    if (!this.embedder || record.status !== "active") return;
+    const embedder = this.embedder;
+    if (!embedder || record.status !== "active") return;
     try {
-      const [vector] = await this.embedder.embed([embeddingText(record)]);
-      if (vector?.length) await this.embedder.index.upsert(record.id, this.embedder.model, vector);
+      const [vector] = await embedder.embed([embeddingText(record)]);
+      if (vector?.length) await embedder.index.upsert(record.id, embedder.model, vector);
     } catch { /* keyword fallback remains available */ }
   }
   async backfillEmbeddings(limit = 32) {
-    if (!this.embedder) return 0;
+    const embedder = this.embedder;
+    if (!embedder) return 0;
     const active = (await this.store.listAll()).filter((record) => record.status === "active");
-    const missing = await this.embedder.index.missing(active.map((record) => record.id), this.embedder.model);
+    const missing = await embedder.index.missing(active.map((record) => record.id), embedder.model);
     const batch = missing.slice(0, Math.max(0, limit)).map((id) => active.find((record) => record.id === id)).filter((record): record is MemoryRecord => Boolean(record));
     if (!batch.length) return 0;
     try {
-      const vectors = await this.embedder.embed(batch.map(embeddingText));
-      await Promise.all(batch.map((record, index) => vectors[index]?.length ? this.embedder!.index.upsert(record.id, this.embedder!.model, vectors[index]) : Promise.resolve()));
+      const vectors = await embedder.embed(batch.map(embeddingText));
+      await embedder.index.upsertMany(batch.flatMap((record, index) => vectors[index]?.length ? [{ id: record.id, model: embedder.model, vector: vectors[index] }] : []));
       return batch.length;
     } catch { return 0; }
   }
   async search({ projectId, query, limit, minScore = this.minScore, includeGlobal = this.includeGlobal }: { projectId?: string; query: string; limit: number; minScore?: number; includeGlobal?: boolean }) {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const embedder = this.embedder;
     const records = (projectId ? [...(includeGlobal ? await this.store.list("global") : []), ...await this.store.list("project", projectId)] : await this.store.listAll()).filter((record) => record.status === "active" && (includeGlobal || record.scope !== "global"));
     let queryVector: number[] | undefined;
-    if (this.embedder && terms.length) {
+    if (embedder && terms.length) {
       await this.backfillEmbeddings(32);
-      try { queryVector = (await this.embedder.embed([query]))[0]; } catch { queryVector = undefined; }
+      try { queryVector = (await embedder.embed([query]))[0]; } catch { queryVector = undefined; }
     }
-    const scored = await Promise.all(records.map(async (record) => {
+    const vectors = queryVector && embedder ? await embedder.index.getMany(records.map(record => record.id), embedder.model) : new Map<string, number[]>();
+    const scored = records.map((record) => {
       const haystack = `${record.title} ${record.summary ?? ""} ${record.content} ${record.applicability?.join(" ") ?? ""}`.toLowerCase();
       const keyword = terms.reduce((sum, term) => sum + Number(haystack.includes(term)), 0);
-      const vector = queryVector && this.embedder ? await this.embedder.index.get(record.id, this.embedder.model) : undefined;
+      const vector = vectors.get(record.id);
       const score = keyword + (queryVector && vector ? cosine(queryVector, vector) * 10 : 0);
       return { record, score };
-    }));
+    });
     return scored.filter(({ score }) => !terms.length || score >= minScore).sort((left, right) => right.score - left.score || right.record.updatedAt.localeCompare(left.record.updatedAt)).slice(0, Math.min(limit, this.maxResults));
   }
   async recall({ projectId, query, limit }: { projectId: string; query: string; limit: number }) { return (await this.search({ projectId, query, limit })).map(({ record }) => record); }
   async observe(input: Omit<Event, "id" | "occurredAt">) { return this.dynamic.appendEvent(input); }
   async promote({ record, expectedRevision }: { record: MemoryRecord; expectedRevision: number }) {
-    if (record.revision !== expectedRevision) throw new Error("Memory revision conflict");
-    const active = { ...record, revision: record.revision + 1, status: "active" as const, updatedAt: now() };
-    await this.store.save(active);
+    if (record.revision !== expectedRevision) throw new RevisionConflictError("Memory revision conflict");
+    const active = await this.store.mutate(record.id, expectedRevision, current => {
+      if (current.status !== "candidate") throw new RevisionConflictError("Only a current candidate can be promoted");
+      if (current.scope === "project" && (!current.projectId || ["maintenance", "unassigned"].includes(current.projectId))) throw new RevisionConflictError("Assign a concrete project before promotion");
+      return { ...current, status: "active" };
+    });
     await this.indexRecord(active);
     return active;
   }
   async consolidate() {
-    const candidates = await this.store.listAll("candidate");
-    const seen = new Map<string, MemoryRecord>(); let promoted = 0; let archived = 0;
+    const records = await this.store.listAll();
+    const candidates = records.filter(record => record.status === "candidate");
+    const keyFor = (record: MemoryRecord) => JSON.stringify([record.scope, record.projectId, record.kind, record.title.trim(), record.content.trim()]);
+    const seen = new Set(records.filter(record => record.status === "active").map(keyFor));
+    let archived = 0;
     for (const candidate of candidates.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
-      const key = `${candidate.scope}:${candidate.projectId ?? ""}:${candidate.kind}:${candidate.title.trim().toLowerCase()}:${candidate.content.trim().toLowerCase()}`;
-      if (seen.has(key)) { await this.store.archive(candidate.id); archived += 1; continue; }
-      seen.set(key, candidate);
-      const eligible = candidate.scope === "project" && candidate.sourceRefs.length > 0 && candidate.content.length >= 80 && !/未知|待归属|冲突|等待人工/.test(candidate.content);
-      if (eligible) { await this.promote({ record: candidate, expectedRevision: candidate.revision }); promoted += 1; }
+      const key = keyFor(candidate);
+      if (seen.has(key)) {
+        try { await this.store.archive(candidate.id, candidate.revision); archived += 1; }
+        catch (error) { if (!(error instanceof RevisionConflictError)) throw error; }
+      } else seen.add(key);
     }
-    return { promoted, archived };
+    // Consolidation is housekeeping, never evidence verification or approval.
+    return { promoted: 0, archived };
   }
+
   async saveCandidate(input: Omit<MemoryRecord, "id" | "revision" | "status" | "createdAt" | "updatedAt">) { const record: MemoryRecord = { ...input, id: newId("memory"), revision: 1, status: "candidate", createdAt: now(), updatedAt: now() }; await this.store.save(record); return record; }
   async candidates(projectId?: string) {
     if (projectId) {
@@ -368,25 +428,23 @@ export class FileMemoryEngine implements MemoryEngine {
     }
     return (await this.store.listAll()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
-  async updateCandidate(id: string, updates: Partial<Pick<MemoryRecord, "title" | "content" | "kind">>) {
-    const record = await this.store.get(id);
-    if (!record) throw new Error("Memory not found");
-    const updated: MemoryRecord = {
-      ...record,
-      ...(updates.title !== undefined ? { title: updates.title } : {}),
-      ...(updates.content !== undefined ? { content: updates.content } : {}),
-      ...(updates.kind !== undefined ? { kind: updates.kind } : {}),
-      updatedAt: now(),
-    };
-    await this.store.save(updated);
-    await this.indexRecord(updated);
-    return updated;
+  async updateCandidate(id: string, updates: Partial<Pick<MemoryRecord, "title" | "content" | "kind">>, expectedRevision: number) {
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 1) throw new RevisionConflictError("Expected revision is required");
+    return this.store.mutate(id, expectedRevision, record => {
+      if (record.status !== "candidate") throw new RevisionConflictError("Only candidate memories can be edited");
+      return {
+        ...record,
+        ...(updates.title !== undefined ? { title: updates.title } : {}),
+        ...(updates.content !== undefined ? { content: updates.content, summary: undefined } : {}),
+        ...(updates.kind !== undefined ? { kind: updates.kind } : {}),
+      };
+    });
   }
-  async archiveCandidate(id: string) {
-    return this.store.archive(id);
+  async archiveCandidate(id: string, expectedRevision?: number) {
+    return this.store.archive(id, expectedRevision);
   }
-  async reassignCandidate(id: string, projectId: string) {
-    if (!projectId.trim() || projectId === "unassigned") throw new Error("A concrete target project is required");
-    return this.store.reassign(id, projectId);
+  async reassignCandidate(id: string, projectId: string, expectedRevision?: number) {
+    if (!projectId.trim() || ["unassigned", "maintenance"].includes(projectId)) throw new InvalidPathError("A concrete target project is required");
+    return this.store.reassign(id, projectId, expectedRevision);
   }
 }

@@ -85,17 +85,17 @@ export const api = {
 
   updateCandidate: (
     id: string,
-    data: { title?: string; content?: string; kind?: string }
+    data: { title?: string; content?: string; kind?: string; expectedRevision: number }
   ): Promise<MemoryRecord> => client.put(`/candidates/${encodeURIComponent(id)}`, data),
 
   promoteCandidate: (id: string, expectedRevision: number): Promise<MemoryRecord> =>
     client.post(`/candidates/${encodeURIComponent(id)}/promote`, { expectedRevision }),
 
-  archiveCandidate: (id: string): Promise<{ success: boolean; record?: MemoryRecord }> =>
-    client.post(`/candidates/${encodeURIComponent(id)}/archive`),
+  archiveCandidate: (id: string, expectedRevision: number): Promise<{ success: boolean; record?: MemoryRecord }> =>
+    client.post(`/candidates/${encodeURIComponent(id)}/archive`, { expectedRevision }),
 
-  reassignCandidate: (id: string, projectId: string): Promise<MemoryRecord> =>
-    client.post(`/candidates/${encodeURIComponent(id)}/reassign`, { projectId }),
+  reassignCandidate: (id: string, projectId: string, expectedRevision: number): Promise<MemoryRecord> =>
+    client.post(`/candidates/${encodeURIComponent(id)}/reassign`, { projectId, expectedRevision }),
 
   // Memories
   getMemories: (projectId?: string, query?: string): Promise<MemoryRecord[]> =>

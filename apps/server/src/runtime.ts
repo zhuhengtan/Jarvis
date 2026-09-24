@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { DefaultContextEngine } from "@jarvis/context";
 import { AgentManager } from "@jarvis/agents";
 import { EvaluationEngine } from "@jarvis/evaluation";
@@ -44,8 +44,8 @@ export class JarvisRuntime {
   }
   async openSession(input: unknown) {
     const value = openSessionInput.parse(input);
-    if (value.mode === "maintenance") {
-      const project = { id: "maintenance", workspace: value.workspace, name: "维护审阅", description: "独立维护会话，不会写入业务项目上下文。" };
+    if (value.mode === "maintenance" || value.mode === "unassigned") {
+      const project = { id: value.mode, workspace: value.workspace, name: value.mode === "maintenance" ? "维护审阅" : "待归属项目", description: "独立上下文，不会读取业务项目记忆。" };
       const session = await this.dynamic.createSession({ projectId: project.id, workspace: project.workspace, client: value.client, task: value.task, mode: value.mode });
       await this.memory.observe({ sessionId: session.id, type: "observation", content: value.task });
       return { session, project, assistantName: this.identity.assistantName, onboarding: this.identity.onboardingRequired ? { required: true, question: this.identity.onboardingQuestion } : { required: false } };
@@ -56,7 +56,14 @@ export class JarvisRuntime {
     await this.memory.observe({ sessionId: session.id, type: "observation", content: value.task });
     return { session, project, assistantName: this.identity.assistantName, onboarding: this.identity.onboardingRequired ? { required: true, question: this.identity.onboardingQuestion } : { required: false }, identityWarning, containedProjects };
   }
-  async buildContext(input: unknown) { const value = buildContextInput.parse(input); const session = await this.requireSession(value.sessionId); const { project } = await this.projects.resolve(session.workspace); return this.context.build({ session, project, task: value.task, tokenBudget: value.tokenBudget }); }
+  async buildContext(input: unknown) {
+    const value = buildContextInput.parse(input);
+    const session = await this.requireSession(value.sessionId);
+    const isolated = session.mode === "maintenance" || session.mode === "unassigned";
+    const registered = isolated ? undefined : (await this.dynamic.listProjects()).find(project => project.id === session.projectId);
+    const project: ProjectIdentity = { ...registered, id: session.projectId, workspace: session.workspace, name: isolated ? session.projectId : registered?.name ?? basename(session.workspace) };
+    return this.context.build({ session, project, task: value.task, tokenBudget: value.tokenBudget });
+  }
   async retrieveContext(input: unknown) { const value = retrieveContextInput.parse(input); const project = value.workspace ? (await this.projects.resolve(value.workspace)).project : await this.resolveProjectFromTask(value.task); const session = { id: newId("context"), projectId: project.id, workspace: project.workspace, client: value.client, task: value.task, mode: project.id === "unassigned" ? "unassigned" as const : "work" as const, status: "active" as const, createdAt: now(), updatedAt: now() }; return this.context.build({ session, project, task: value.task, tokenBudget: value.tokenBudget }); }
   async searchMemory(projectId: string, query: string, limit = 10) { return this.memory.recall({ projectId, query, limit }); }
   async searchRag(input: { projectId?: string; query: string; limit?: number; minScore?: number }) { const limit = Math.min(100, Math.max(1, input.limit ?? this.settings.ragMaxResults)); return this.memory.search({ projectId: input.projectId, query: input.query, limit, minScore: input.minScore ?? this.settings.ragMinScore, includeGlobal: this.settings.ragIncludeGlobal }); }
@@ -100,9 +107,9 @@ export class JarvisRuntime {
   }
   async allCandidates(projectId?: string) { return this.memory.candidates(projectId); }
   async allMemories(projectId?: string) { return this.memory.allMemories(projectId); }
-  async updateCandidate(id: string, updates: Partial<Pick<MemoryRecord, "title" | "content" | "kind">>) { return this.memory.updateCandidate(id, updates); }
-  async archiveCandidate(id: string) { return this.memory.archiveCandidate(id); }
-  async reassignCandidate(id: string, projectId: string) { const project = (await this.dynamic.listProjects()).find((item) => item.id === projectId); if (!project) throw new Error("Target project not found"); return this.memory.reassignCandidate(id, projectId); }
+  async updateCandidate(id: string, updates: Partial<Pick<MemoryRecord, "title" | "content" | "kind">>, expectedRevision: number) { return this.memory.updateCandidate(id, updates, expectedRevision); }
+  async archiveCandidate(id: string, expectedRevision?: number) { return this.memory.archiveCandidate(id, expectedRevision); }
+  async reassignCandidate(id: string, projectId: string, expectedRevision?: number) { const project = (await this.dynamic.listProjects()).find((item) => item.id === projectId); if (!project) throw new Error("Target project not found"); return this.memory.reassignCandidate(id, projectId, expectedRevision); }
   async consolidateMemory() { return this.memory.consolidate(); }
   async autoReviewCandidates() {
     if (this.settings.provider !== "ollama" || !this.settings.ollamaModel.trim()) throw new Error("审核模型未配置");
@@ -118,17 +125,13 @@ export class JarvisRuntime {
       }
     };
     await Promise.all(Array.from({ length: Math.min(3, candidates.length) }, () => reviewWorker()));
-    const result = { total: candidates.length, promoted: 0, archived: 0, kept: 0, failed: 0 };
-    for (const { candidate, decision } of decisions) {
-      if (decision.error) { result.failed += 1; continue; }
-      try {
-        if (decision.action === "promote") { await this.memory.promote({ record: candidate, expectedRevision: candidate.revision }); result.promoted += 1; }
-        else if (decision.action === "archive") { await this.memory.archiveCandidate(candidate.id); result.archived += 1; }
-        else result.kept += 1;
-      } catch { result.failed += 1; }
-    }
-    return result;
+    // Model output is advice, never proof that the source was verified.
+    const recommendations = decisions.filter(({ decision }) => !decision.error).map(({ candidate, decision }) => ({
+      id: candidate.id, title: candidate.title, expectedRevision: candidate.revision, action: decision.action, reason: decision.reason,
+    }));
+    return { total: candidates.length, promoted: 0, archived: 0, kept: recommendations.length, failed: decisions.length - recommendations.length, recommendations };
   }
+
   async promoteCandidate(id: string, expectedRevision: number) { const candidates = await this.memory.candidates(); const record = candidates.find((item) => item.id === id); if (!record) throw new Error("Candidate memory not found"); return this.memory.promote({ record, expectedRevision }); }
   async overviewStats() {
     const [sessions, candidates, memories, skills] = await Promise.all([

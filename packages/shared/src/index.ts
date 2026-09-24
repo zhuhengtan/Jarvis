@@ -1,4 +1,5 @@
 import { z } from "zod";
+export { assertSafeId, confinedPath, atomicWriteFile, withFileLock, InvalidPathError, RevisionConflictError } from "./filesystem.js";
 
 export const memoryKinds = ["preference", "fact", "constraint", "decision", "identity", "workflow"] as const;
 export type MemoryKind = (typeof memoryKinds)[number];
@@ -29,7 +30,7 @@ export const goalInput = z.object({ projectId: z.string().min(1), title: z.strin
 export const closeSessionInput = experienceInput.extend({ result: z.enum(["success", "failure", "partial"]) });
 
 export const adminLoginInput = z.object({ token: z.string().min(1) });
-export const updateCandidateInput = z.object({ title: z.string().min(1).optional(), content: z.string().min(1).optional(), kind: z.enum(memoryKinds).optional() });
+export const updateCandidateInput = z.object({ expectedRevision: z.number().int().positive(), title: z.string().min(1).optional(), content: z.string().min(1).optional(), kind: z.enum(memoryKinds).optional() });
 export const listSessionsInput = z.object({ projectId: z.string().optional(), status: z.enum(["active", "closed"]).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) });
 export const runtimeSettingsInput = z.object({ provider: z.enum(["ollama", "none"]), ollamaBaseUrl: z.string().url(), ollamaModel: z.string().min(1).max(120), embeddingProvider: z.enum(["ollama", "none"]), embeddingBaseUrl: z.string().url(), embeddingModel: z.string().min(1).max(120), ragMinScore: z.number().min(0).max(20), ragMaxResults: z.number().int().min(1).max(100), ragMemoryLimit: z.number().int().min(1).max(100), ragRecentEventLimit: z.number().int().min(0).max(100), ragSkillLimit: z.number().int().min(0).max(50), ragIncludeGlobal: z.boolean(), autoConsolidation: z.boolean() });
 

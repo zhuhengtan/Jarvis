@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { FileMemoryEngine, JsonEmbeddingIndex, JsonlDynamicStore, MarkdownMemoryStore, PostgresDynamicStore, type DynamicStore } from "@jarvis/memory";
 import { OllamaProvider } from "@jarvis/providers";
 
-/** The worker archives exact duplicates, promotes evidence-backed records, and backfills embeddings. */
+/** The worker archives exact duplicates and backfills embeddings; promotion requires explicit review. */
 const intervalMs = Number(process.env.JARVIS_WORKER_INTERVAL_MS ?? 60_000);
 const memoryRoot = process.env.MEMORY_ROOT?.trim() || join(process.env.JARVIS_HOME?.trim() || join(homedir(), ".jarvis"), "memory");
 const settingsPath = join(resolve(memoryRoot, ".."), "settings.json");

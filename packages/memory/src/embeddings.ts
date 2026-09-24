@@ -1,5 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
+import { basename, dirname } from "node:path";
+import { atomicWriteFile, confinedPath, withFileLock } from "@jarvis/shared";
 
 export interface StoredEmbedding { model: string; vector: number[]; updatedAt: string; }
 
@@ -16,28 +17,33 @@ export function cosine(left: number[], right: number[]) {
 }
 
 export class JsonEmbeddingIndex {
-  private cache?: Record<string, StoredEmbedding>;
   constructor(private readonly path: string) {}
-  private async load() {
-    if (this.cache) return this.cache;
-    try { this.cache = JSON.parse(await readFile(this.path, "utf8")) as Record<string, StoredEmbedding>; } catch (error) {
+  private async load(): Promise<Record<string, StoredEmbedding>> {
+    const path = await confinedPath(dirname(this.path), basename(this.path));
+    try { return JSON.parse(await readFile(path, "utf8")) as Record<string, StoredEmbedding>; } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      this.cache = {};
+      return Object.create(null) as Record<string, StoredEmbedding>;
     }
-    return this.cache;
-  }
-  private async persist() {
-    await mkdir(dirname(this.path), { recursive: true });
-    await writeFile(this.path, `${JSON.stringify(this.cache ?? {}, null, 2)}\n`, "utf8");
   }
   async get(id: string, model: string) {
     const stored = (await this.load())[id];
     return stored?.model === model ? stored.vector : undefined;
   }
+  async getMany(ids: string[], model: string): Promise<Map<string, number[]>> {
+    const current = await this.load();
+    return new Map(ids.flatMap(id => current[id]?.model === model ? [[id, current[id].vector] as const] : []));
+  }
   async upsert(id: string, model: string, vector: number[]) {
-    const cache = await this.load();
-    cache[id] = { model, vector, updatedAt: new Date().toISOString() };
-    await this.persist();
+    await this.upsertMany([{ id, model, vector }]);
+  }
+  async upsertMany(entries: Array<{ id: string; model: string; vector: number[] }>) {
+    await withFileLock(dirname(this.path), `${basename(this.path)}-lock`, async () => {
+      const current = await this.load();
+      for (const { id, model, vector } of entries) {
+        Object.defineProperty(current, id, { value: { model, vector, updatedAt: new Date().toISOString() }, enumerable: true, configurable: true, writable: true });
+      }
+      await atomicWriteFile(await confinedPath(dirname(this.path), basename(this.path)), `${JSON.stringify(current, null, 2)}\n`);
+    });
   }
   async missing(ids: string[], model: string) {
     const cache = await this.load();

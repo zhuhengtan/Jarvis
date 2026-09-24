@@ -73,7 +73,8 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (app: F
     protectedApp.put("/candidates/:id", async (request) => {
       const { id } = request.params as { id: string };
       const body = updateCandidateInput.parse(request.body);
-      return runtime.updateCandidate(id, body);
+      const { expectedRevision, ...updates } = body;
+      return runtime.updateCandidate(id, updates, expectedRevision);
     });
 
     protectedApp.post("/candidates/:id/promote", async (request) => {
@@ -84,14 +85,15 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (app: F
 
     protectedApp.post("/candidates/:id/archive", async (request) => {
       const { id } = request.params as { id: string };
-      const archived = await runtime.archiveCandidate(id);
+      const body = z.object({ expectedRevision: z.number().int().positive().optional() }).parse(request.body ?? {});
+      const archived = await runtime.archiveCandidate(id, body.expectedRevision);
       return { success: true, record: archived };
     });
 
     protectedApp.post("/candidates/:id/reassign", async (request) => {
       const { id } = request.params as { id: string };
-      const body = z.object({ projectId: z.string().min(1) }).parse(request.body);
-      return runtime.reassignCandidate(id, body.projectId);
+      const body = z.object({ projectId: z.string().min(1), expectedRevision: z.number().int().positive().optional() }).parse(request.body);
+      return runtime.reassignCandidate(id, body.projectId, body.expectedRevision);
     });
     protectedApp.post("/consolidate", async () => runtime.consolidateMemory());
 

@@ -133,6 +133,7 @@ describe("Admin API Routes", () => {
       url: `/v1/admin/candidates/${candidate.id}`,
       headers: { authorization: `Bearer ${adminToken}` },
       payload: {
+        expectedRevision: candidate.revision,
         title: "Updated Preference Title",
         content: "Updated memory content",
       },
@@ -145,7 +146,7 @@ describe("Admin API Routes", () => {
       method: "POST",
       url: `/v1/admin/candidates/${candidate.id}/promote`,
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { expectedRevision: 1 },
+      payload: { expectedRevision: editRes.json().revision },
     });
     expect(promoteRes.statusCode).toBe(200);
     expect(promoteRes.json().status).toBe("active");

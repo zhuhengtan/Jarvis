@@ -67,7 +67,7 @@ export const CandidatesPage: React.FC = () => {
   const handleReassign = async (record: MemoryRecord) => {
     const projectId = assignment[record.id];
     if (!projectId) return message.warning("请选择目标项目");
-    try { await api.reassignCandidate(record.id, projectId); message.success("候选已重新归属"); loadCandidates(); }
+    try { await api.reassignCandidate(record.id, projectId, record.revision); message.success("候选已重新归属"); loadCandidates(); }
     catch (err: any) { message.error(err.message || "重新归属失败"); }
   };
 
@@ -87,7 +87,7 @@ export const CandidatesPage: React.FC = () => {
 
   const handleArchive = async (record: MemoryRecord) => {
     try {
-      await api.archiveCandidate(record.id);
+      await api.archiveCandidate(record.id, record.revision);
       message.info(`已归档候选记忆: "${record.title}"`);
       loadCandidates();
     } catch (err: any) {
@@ -99,7 +99,10 @@ export const CandidatesPage: React.FC = () => {
     setAutoReviewing(true);
     try {
       const result = await api.autoReviewCandidates();
-      message.success(`自动审查完成：提拔 ${result.promoted} 条，归档 ${result.archived} 条，保留 ${result.kept} 条${result.failed ? `，失败 ${result.failed} 条` : ""}`);
+      Modal.info({
+        title: `审核建议（${result.failed} 条失败）`, width: 680,
+        content: <div>建议尚未执行，请核对来源后在列表中操作。{result.recommendations.map(item => <p key={item.id}><strong>{item.title}</strong>：{({ promote: "建议提升", archive: "建议归档", keep: "建议保留" })[item.action]} — {item.reason}</p>)}</div>,
+      });
       await loadCandidates();
     } catch (err: any) {
       message.error(err.message || "自动审查失败");
@@ -122,7 +125,7 @@ export const CandidatesPage: React.FC = () => {
     if (!selectedRecord) return;
     try {
       const values = await form.validateFields();
-      await api.updateCandidate(selectedRecord.id, values);
+      await api.updateCandidate(selectedRecord.id, { ...values, expectedRevision: selectedRecord.revision });
       message.success("候选记忆修改成功");
       setIsEditing(false);
       loadCandidates();
@@ -272,7 +275,7 @@ export const CandidatesPage: React.FC = () => {
           <Space>
             {settings?.provider === "ollama" && settings.ollamaModel.trim() && (
               <Button type="primary" icon={<RobotOutlined />} onClick={handleAutoReview} loading={autoReviewing}>
-                开始自动审查
+                生成审核建议
               </Button>
             )}
             <Button icon={<ReloadOutlined />} onClick={loadCandidates} loading={loading}>

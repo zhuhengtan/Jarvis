@@ -1,5 +1,5 @@
-import { readFile, readdir, writeFile, mkdir, rm, chmod } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, readdir, mkdir, rm, chmod } from "node:fs/promises";
+import { confinedPath, atomicWriteFile, InvalidPathError, skillBundleInput } from "@jarvis/shared";
 import type { SkillEngine } from "@jarvis/core";
 import type { SkillBundle, SkillScript } from "@jarvis/shared";
 
@@ -40,8 +40,9 @@ export class FilesystemSkillEngine implements SkillEngine {
 
   async load(name: string) {
     try {
-      return await readFile(join(this.root, name, "SKILL.md"), "utf8");
-    } catch {
+      return await readFile(await confinedPath(this.root, name, "SKILL.md"), "utf8");
+    } catch (error) {
+      if (error instanceof InvalidPathError) throw error;
       return undefined;
     }
   }
@@ -50,13 +51,13 @@ export class FilesystemSkillEngine implements SkillEngine {
     const content = await this.load(name);
     if (!content) return undefined;
 
-    const scriptsDir = join(this.root, name, "scripts");
+    const scriptsDir = await confinedPath(this.root, name, "scripts");
     const scripts: SkillScript[] = [];
     try {
       const files = await readdir(scriptsDir);
       for (const file of files) {
         try {
-          const scriptContent = await readFile(join(scriptsDir, file), "utf8");
+          const scriptContent = await readFile(await confinedPath(this.root, name, "scripts", file), "utf8");
           scripts.push({ filename: file, content: scriptContent });
         } catch {
           // ignore unreadable files
@@ -71,11 +72,14 @@ export class FilesystemSkillEngine implements SkillEngine {
   }
 
   async saveBundle(bundle: SkillBundle): Promise<void> {
-    const dir = join(this.root, bundle.name);
+    bundle = skillBundleInput.parse(bundle);
+    const dir = await confinedPath(this.root, bundle.name);
+    const main = await confinedPath(this.root, bundle.name, "SKILL.md");
+    const scriptsDir = await confinedPath(this.root, bundle.name, "scripts");
+    const paths = await Promise.all(bundle.scripts.map(script => confinedPath(this.root, bundle.name, "scripts", script.filename)));
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "SKILL.md"), bundle.content, "utf8");
+    await atomicWriteFile(main, bundle.content);
 
-    const scriptsDir = join(dir, "scripts");
     await mkdir(scriptsDir, { recursive: true });
 
     // Clean up old scripts or update
@@ -84,13 +88,13 @@ export class FilesystemSkillEngine implements SkillEngine {
 
     for (const oldFile of existingFiles) {
       if (!incomingFilenames.has(oldFile)) {
-        await rm(join(scriptsDir, oldFile), { force: true }).catch(() => {});
+        await rm(await confinedPath(this.root, bundle.name, "scripts", oldFile), { force: true });
       }
     }
 
-    for (const script of bundle.scripts) {
-      const filePath = join(scriptsDir, script.filename);
-      await writeFile(filePath, script.content, "utf8");
+    for (const [index, script] of bundle.scripts.entries()) {
+      const filePath = paths[index];
+      await atomicWriteFile(filePath, script.content);
       if (script.filename.endsWith(".sh") || script.content.startsWith("#!")) {
         await chmod(filePath, 0o755).catch(() => {});
       }
@@ -98,7 +102,7 @@ export class FilesystemSkillEngine implements SkillEngine {
   }
 
   async delete(name: string): Promise<boolean> {
-    const dir = join(this.root, name);
+    const dir = await confinedPath(this.root, name);
     try {
       await rm(dir, { recursive: true, force: true });
       return true;
@@ -111,18 +115,18 @@ export class FilesystemSkillEngine implements SkillEngine {
     let entries: string[];
     try {
       const dirents = await readdir(this.root, { withFileTypes: true });
-      entries = dirents.filter((d) => d.isDirectory() || d.isSymbolicLink()).map((d) => d.name);
+      entries = dirents.filter((d) => d.isDirectory()).map((d) => d.name);
     } catch {
       return [];
     }
 
     return Promise.all(
       entries.map(async (name) => {
-        const content = await this.load(name);
+        const content = await this.load(name).catch((error) => { if (error instanceof InvalidPathError) return undefined; throw error; });
         if (!content) return undefined;
         let scriptCount = 0;
         try {
-          const scriptFiles = await readdir(join(this.root, name, "scripts"));
+          const scriptFiles = await readdir(await confinedPath(this.root, name, "scripts"));
           scriptCount = scriptFiles.length;
         } catch {
           scriptCount = 0;

@@ -118,6 +118,7 @@ export interface RuntimeSettings {
 }
 
 export interface AutoReviewResult {
+  recommendations: Array<{ id: string; title: string; expectedRevision: number; action: "promote" | "archive" | "keep"; reason: string }>;
   total: number;
   promoted: number;
   archived: number;
