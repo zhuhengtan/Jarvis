@@ -115,6 +115,21 @@ export interface RuntimeSettings {
   ragSkillLimit: number;
   ragIncludeGlobal: boolean;
   autoConsolidation: boolean;
+  autoApprovalEnabled: boolean;
+  autoApprovalIntervalMinutes: number;
+}
+
+export interface ApprovalSweepStatus {
+  running: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  scanned: number;
+  promoted: number;
+  archived: number;
+  kept: number;
+  failed: number;
+  remaining: number;
+  error: string | null;
 }
 
 export interface AutoReviewResult {

@@ -125,6 +125,28 @@ it("rejects archive when its reviewed memory context changes during inference", 
   expect((await runtime.allCandidates()).map(item => item.id)).toEqual([candidate.id]);
 });
 
+it("approves the pending queue once from oldest to newest and leaves blocked candidates", async () => {
+  const { runtime, create } = await fixture();
+  const blocked = await create("Blocked", "noise", undefined, []);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const older = await create("Older", "Use PostgreSQL for events");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const newer = await create("Newer", "Archive this status note");
+  const order: string[] = [];
+  vi.spyOn(OllamaProvider.prototype, "reviewCandidate").mockImplementation(async (candidate) => {
+    order.push(candidate.title);
+    return { action: candidate.title === "Newer" ? "archive" : "promote", reason: "supported" };
+  });
+  runtime.beginOldestApprovalSweep();
+  const status = await runtime.waitForApprovalSweep();
+  expect(order).toEqual(["Older", "Newer"]);
+  expect(status).toMatchObject({ running: false, scanned: 3, promoted: 1, archived: 1, kept: 1, failed: 0, remaining: 0, error: null });
+  expect((await runtime.allCandidates()).map((item) => item.id)).toEqual([blocked.id]);
+  runtime.beginOldestApprovalSweep();
+  expect((await runtime.waitForApprovalSweep()).scanned).toBe(1);
+  expect(order).toEqual(["Older", "Newer"]);
+});
+
 it("the HTTP path requires revisions and does not execute a thinking-only verdict", async () => {
   const { runtime, create } = await fixture();
   const candidate = await create("Thinking");

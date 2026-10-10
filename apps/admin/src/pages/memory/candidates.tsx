@@ -26,7 +26,7 @@ import {
   RobotOutlined,
 } from "@ant-design/icons";
 import { api } from "../../services/api";
-import type { MemoryRecord, MemoryKind, ProjectDetail, RuntimeSettings } from "../../types";
+import type { ApprovalSweepStatus, MemoryRecord, MemoryKind, ProjectDetail, RuntimeSettings } from "../../types";
 
 const { Text } = Typography;
 const { Option } = Select;
@@ -52,13 +52,14 @@ export const CandidatesPage: React.FC = () => {
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [autoReviewing, setAutoReviewing] = useState(false);
   const [autoApproving, setAutoApproving] = useState(false);
+  const [sweep, setSweep] = useState<ApprovalSweepStatus | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   const loadCandidates = async () => {
     setLoading(true);
     try {
-      const [data, projectData, runtimeSettings] = await Promise.all([api.getCandidates(), api.getProjects(), api.getSettings()]);
-      setCandidates(data); setProjects(projectData); setSettings(runtimeSettings);
+      const [data, projectData, runtimeSettings, approval] = await Promise.all([api.getCandidates(), api.getProjects(), api.getSettings(), api.approvalSweepStatus()]);
+      setCandidates(data); setProjects(projectData); setSettings(runtimeSettings); setSweep(approval);
     } catch (err: any) {
       message.error(err.message || "加载候选记忆失败");
     } finally {
@@ -76,6 +77,20 @@ export const CandidatesPage: React.FC = () => {
   useEffect(() => {
     loadCandidates();
   }, []);
+
+  useEffect(() => {
+    if (!sweep?.running) return;
+    const timer = window.setTimeout(async () => {
+      try {
+        const status = await api.approvalSweepStatus();
+        setSweep(status);
+        if (!status.running) await loadCandidates();
+      } catch (err: any) {
+        message.error(err.message || "读取自动审批进度失败");
+      }
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [sweep]);
 
   const handlePromote = async (record: MemoryRecord) => {
     try {
@@ -111,6 +126,23 @@ export const CandidatesPage: React.FC = () => {
     } finally {
       setAutoReviewing(false);
     }
+  };
+
+  const handleOldestApproval = () => {
+    if (sweep?.running || autoApproving) return;
+    Modal.confirm({
+      title: "从旧到新全量自动审批",
+      content: "将按创建时间从旧到新处理全部待审候选，并按本机 Ollama 的判定提升或归档。来源不足、未归属或审核上下文过大的条目会保留，供人工处理。",
+      okText: "开始",
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          setSweep(await api.startOldestApproval());
+        } catch (err: any) {
+          message.error(err.message || "全量自动审批失败");
+        }
+      },
+    });
   };
 
   const handleAutoApprove = () => {
@@ -314,7 +346,10 @@ export const CandidatesPage: React.FC = () => {
           <Space>
             {settings?.provider === "ollama" && settings.ollamaModel.trim() && (
               <>
-                <Button icon={<RobotOutlined />} onClick={handleAutoApprove} disabled={selectedRowKeys.length === 0 || autoApproving || autoReviewing} loading={autoApproving}>
+                <Button icon={<RobotOutlined />} onClick={handleOldestApproval} loading={sweep?.running} disabled={autoApproving || autoReviewing}>
+                  从旧到新全量自动审批
+                </Button>
+                <Button icon={<RobotOutlined />} onClick={handleAutoApprove} disabled={selectedRowKeys.length === 0 || autoApproving || autoReviewing || sweep?.running} loading={autoApproving}>
                   执行自动审批（持久化写入）
                 </Button>
                 <Button type="primary" icon={<RobotOutlined />} onClick={handleAutoReview} loading={autoReviewing} disabled={autoApproving}>
@@ -328,6 +363,13 @@ export const CandidatesPage: React.FC = () => {
           </Space>
         }
       >
+        {sweep && (sweep.running || sweep.finishedAt) && (
+          <div style={{ marginBottom: 12 }}>
+            {sweep.running ? "正在从旧到新自动审批" : "最近一轮自动审批"}：已查看 {sweep.scanned}，提升 {sweep.promoted}，归档 {sweep.archived}，保留 {sweep.kept}，失败 {sweep.failed}，剩余 {sweep.remaining}
+            {sweep.error ? `。${sweep.error}` : ""}
+            {settings?.autoApprovalEnabled ? `。定时每 ${settings.autoApprovalIntervalMinutes} 分钟再跑一轮。` : "。定时自动审批未开启。"}
+          </div>
+        )}
         <Table
           rowKey="id"
           columns={columns}

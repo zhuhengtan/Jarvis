@@ -21,7 +21,7 @@ export const extractedKinds = ["decision", "constraint", "fact", "workflow"] as 
 export type ExtractedKind = (typeof extractedKinds)[number];
 export interface ExtractedFact { kind: ExtractedKind; title: string; content: string; }
 
-export interface RuntimeSettings { provider: "ollama" | "none"; ollamaBaseUrl: string; ollamaModel: string; embeddingProvider: "ollama" | "none"; embeddingBaseUrl: string; embeddingModel: string; ragMinScore: number; ragMaxResults: number; ragMemoryLimit: number; ragRecentEventLimit: number; ragSkillLimit: number; ragIncludeGlobal: boolean; autoConsolidation: boolean; }
+export interface RuntimeSettings { provider: "ollama" | "none"; ollamaBaseUrl: string; ollamaModel: string; embeddingProvider: "ollama" | "none"; embeddingBaseUrl: string; embeddingModel: string; ragMinScore: number; ragMaxResults: number; ragMemoryLimit: number; ragRecentEventLimit: number; ragSkillLimit: number; ragIncludeGlobal: boolean; autoConsolidation: boolean; autoApprovalEnabled: boolean; autoApprovalIntervalMinutes: number; }
 
 export const openSessionInput = z.object({ client: z.string().min(1).max(80), workspace: z.string().min(1), task: z.string().min(1).max(10_000), mode: z.enum(["work", "maintenance", "unassigned"]).default("work") });
 export const buildContextInput = z.object({ sessionId: z.string().min(1), task: z.string().min(1), tokenBudget: z.number().int().min(500).max(50_000).default(8_000) });
@@ -35,7 +35,7 @@ export const autoApproveCandidatesInput = z.object({ candidates: z.array(z.objec
 export const adminLoginInput = z.object({ token: z.string().min(1) });
 export const updateCandidateInput = z.object({ expectedRevision: z.number().int().positive(), title: z.string().min(1).optional(), content: z.string().min(1).optional(), kind: z.enum(memoryKinds).optional() });
 export const listSessionsInput = z.object({ projectId: z.string().optional(), status: z.enum(["active", "closed"]).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) });
-export const runtimeSettingsInput = z.object({ provider: z.enum(["ollama", "none"]), ollamaBaseUrl: z.string().url(), ollamaModel: z.string().min(1).max(120), embeddingProvider: z.enum(["ollama", "none"]), embeddingBaseUrl: z.string().url(), embeddingModel: z.string().min(1).max(120), ragMinScore: z.number().min(0).max(20), ragMaxResults: z.number().int().min(1).max(100), ragMemoryLimit: z.number().int().min(1).max(100), ragRecentEventLimit: z.number().int().min(0).max(100), ragSkillLimit: z.number().int().min(0).max(50), ragIncludeGlobal: z.boolean(), autoConsolidation: z.boolean() });
+export const runtimeSettingsInput = z.object({ provider: z.enum(["ollama", "none"]), ollamaBaseUrl: z.string().url(), ollamaModel: z.string().min(1).max(120), embeddingProvider: z.enum(["ollama", "none"]), embeddingBaseUrl: z.string().url(), embeddingModel: z.string().min(1).max(120), ragMinScore: z.number().min(0).max(20), ragMaxResults: z.number().int().min(1).max(100), ragMemoryLimit: z.number().int().min(1).max(100), ragRecentEventLimit: z.number().int().min(0).max(100), ragSkillLimit: z.number().int().min(0).max(50), ragIncludeGlobal: z.boolean(), autoConsolidation: z.boolean(), autoApprovalEnabled: z.boolean().default(true), autoApprovalIntervalMinutes: z.number().int().min(5).max(1440).default(60) });
 
 export interface SkillScript { filename: string; content: string; }
 export interface SkillBundle { name: string; description?: string; content: string; scripts: SkillScript[]; }

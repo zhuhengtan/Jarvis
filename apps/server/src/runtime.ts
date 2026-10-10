@@ -14,10 +14,16 @@ import { prepareCandidateReview } from "./candidate-review.js";
 import { autoApproveCandidatesInput, closeSessionInput, eventInput, experienceInput, goalInput, openSessionInput, buildContextInput, retrieveContextInput, runtimeSettingsInput, newId, now, type MemoryRecord, type SkillBundle, type ProjectIdentity, type RuntimeSettings } from "@jarvis/shared";
 
 export interface RuntimeConfig { assistantName?: string; memoryRoot: string; skillsRoot: string; databaseUrl?: string; }
-const defaultSettings: RuntimeSettings = { provider: "ollama", ollamaBaseUrl: process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434", ollamaModel: process.env.OLLAMA_MODEL?.trim() || "llama3.2", embeddingProvider: "none", embeddingBaseUrl: process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434", embeddingModel: process.env.OLLAMA_EMBEDDING_MODEL?.trim() || "nomic-embed-text", ragMinScore: 1, ragMaxResults: 12, ragMemoryLimit: 12, ragRecentEventLimit: 8, ragSkillLimit: 5, ragIncludeGlobal: true, autoConsolidation: true };
+const defaultSettings: RuntimeSettings = { provider: "ollama", ollamaBaseUrl: process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434", ollamaModel: process.env.OLLAMA_MODEL?.trim() || "llama3.2", embeddingProvider: "none", embeddingBaseUrl: process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434", embeddingModel: process.env.OLLAMA_EMBEDDING_MODEL?.trim() || "nomic-embed-text", ragMinScore: 1, ragMaxResults: 12, ragMemoryLimit: 12, ragRecentEventLimit: 8, ragSkillLimit: 5, ragIncludeGlobal: true, autoConsolidation: true, autoApprovalEnabled: true, autoApprovalIntervalMinutes: 60 };
+const approvalBatchSize = 8;
+export interface ApprovalSweepStatus { running: boolean; startedAt: string | null; finishedAt: string | null; scanned: number; promoted: number; archived: number; kept: number; failed: number; remaining: number; error: string | null; }
+const idleApprovalStatus = (): ApprovalSweepStatus => ({ running: false, startedAt: null, finishedAt: null, scanned: 0, promoted: 0, archived: 0, kept: 0, failed: 0, remaining: 0, error: null });
 
 export class JarvisRuntime {
   readonly projects = new ProjectResolver(); readonly dynamic: DynamicStore; readonly memory: FileMemoryEngine; readonly skills: FilesystemSkillEngine; readonly context: DefaultContextEngine; readonly evaluations = new EvaluationEngine(); readonly reflections = new ReflectionEngine(); readonly agents = new AgentManager(); readonly tools = new ToolGateway(); readonly identity: IdentityService; readonly settings: RuntimeSettings;
+  private approvalTimer?: ReturnType<typeof setInterval>;
+  private approvalTask?: Promise<void>;
+  private approvalStatus: ApprovalSweepStatus = idleApprovalStatus();
   private constructor(readonly config: RuntimeConfig, dynamic: DynamicStore, identity: IdentityService, settings: RuntimeSettings) { this.dynamic = dynamic; this.identity = identity; this.settings = settings; this.memory = new FileMemoryEngine(new MarkdownMemoryStore(config.memoryRoot), dynamic); this.memory.setRetrievalConfig({ minScore: settings.ragMinScore, maxResults: settings.ragMaxResults, includeGlobal: settings.ragIncludeGlobal }); this.skills = new FilesystemSkillEngine(config.skillsRoot); this.context = new DefaultContextEngine(this.memory, { active: (projectId) => dynamic.activeGoal(projectId) }, this.skills, (projectId, limit) => dynamic.recentEvents(projectId, limit), { memory: settings.ragMemoryLimit, events: settings.ragRecentEventLimit, skills: settings.ragSkillLimit }); }
   static async create(config: RuntimeConfig) {
     await Promise.all([mkdir(config.memoryRoot, { recursive: true }), mkdir(config.skillsRoot, { recursive: true })]);
@@ -70,7 +76,7 @@ export class JarvisRuntime {
   async searchMemory(projectId: string, query: string, limit = 10) { return this.memory.recall({ projectId, query, limit }); }
   async searchRag(input: { projectId?: string; query: string; limit?: number; minScore?: number }) { const limit = Math.min(100, Math.max(1, input.limit ?? this.settings.ragMaxResults)); return this.memory.search({ projectId: input.projectId, query: input.query, limit, minScore: input.minScore ?? this.settings.ragMinScore, includeGlobal: this.settings.ragIncludeGlobal }); }
   async getSettings() { return this.settings; }
-  async updateSettings(input: unknown) { const next = runtimeSettingsInput.parse(input); Object.assign(this.settings, next); this.memory.setRetrievalConfig({ minScore: next.ragMinScore, maxResults: next.ragMaxResults, includeGlobal: next.ragIncludeGlobal }); this.context.setLimits({ memory: next.ragMemoryLimit, events: next.ragRecentEventLimit, skills: next.ragSkillLimit }); this.applyProviders(); await writeFile(join(resolve(this.config.memoryRoot, ".."), "settings.json"), JSON.stringify(next, null, 2), "utf8"); return this.settings; }
+  async updateSettings(input: unknown) { const next = runtimeSettingsInput.parse(input); Object.assign(this.settings, next); this.memory.setRetrievalConfig({ minScore: next.ragMinScore, maxResults: next.ragMaxResults, includeGlobal: next.ragIncludeGlobal }); this.context.setLimits({ memory: next.ragMemoryLimit, events: next.ragRecentEventLimit, skills: next.ragSkillLimit }); this.applyProviders(); this.startAutoApprovalSchedule(); await writeFile(join(resolve(this.config.memoryRoot, ".."), "settings.json"), JSON.stringify(next, null, 2), "utf8"); return this.settings; }
   async testOllama() { if (this.settings.provider !== "ollama") return { ok: false, provider: this.settings.provider, message: "Ollama provider is disabled" }; try { const response = await fetch(`${this.settings.ollamaBaseUrl.replace(/\/$/, "")}/api/tags`); return { ok: response.ok, provider: "ollama", baseUrl: this.settings.ollamaBaseUrl, model: this.settings.ollamaModel, message: response.ok ? "connected" : `HTTP ${response.status}` }; } catch (error) { return { ok: false, provider: "ollama", baseUrl: this.settings.ollamaBaseUrl, model: this.settings.ollamaModel, message: error instanceof Error ? error.message : String(error) }; } }
   async testEmbedding() { if (this.settings.embeddingProvider !== "ollama") return { ok: false, provider: this.settings.embeddingProvider, message: "Embedding provider is disabled" }; try { const response = await fetch(`${this.settings.embeddingBaseUrl.replace(/\/$/, "")}/api/embed`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: this.settings.embeddingModel, input: "jarvis embedding health check" }) }); if (!response.ok) return { ok: false, provider: "ollama", model: this.settings.embeddingModel, message: `HTTP ${response.status}` }; const payload = await response.json() as { embeddings?: number[][] }; return { ok: Array.isArray(payload.embeddings?.[0]), provider: "ollama", model: this.settings.embeddingModel, dimensions: payload.embeddings?.[0]?.length ?? 0, message: Array.isArray(payload.embeddings?.[0]) ? "connected" : "Invalid embedding response" }; } catch (error) { return { ok: false, provider: "ollama", model: this.settings.embeddingModel, message: error instanceof Error ? error.message : String(error) }; } }
   async openMaintenanceSession(input: { client: string; task: string }) { return this.openSession({ ...input, workspace: process.cwd(), mode: "maintenance" }); }
@@ -170,6 +176,54 @@ export class JarvisRuntime {
       results.push({ id, action: "failed", reason: "审核模型返回了无效动作" });
     }
     return { promoted, archived, kept, failed, results };
+  }
+
+  approvalSweepStatus(): ApprovalSweepStatus { return { ...this.approvalStatus }; }
+  beginOldestApprovalSweep(): ApprovalSweepStatus {
+    if (this.approvalTask) return this.approvalSweepStatus();
+    if (this.settings.provider !== "ollama" || !this.settings.ollamaModel.trim()) {
+      this.approvalStatus = { ...idleApprovalStatus(), error: "审核模型未配置", finishedAt: now() };
+      return this.approvalSweepStatus();
+    }
+    this.approvalStatus = { running: true, startedAt: now(), finishedAt: null, scanned: 0, promoted: 0, archived: 0, kept: 0, failed: 0, remaining: 0, error: null };
+    this.approvalTask = this.runOldestApprovalSweep().finally(() => { this.approvalTask = undefined; });
+    return this.approvalSweepStatus();
+  }
+  async waitForApprovalSweep() { await this.approvalTask; return this.approvalSweepStatus(); }
+  startAutoApprovalSchedule() {
+    if (this.approvalTimer) clearInterval(this.approvalTimer);
+    this.approvalTimer = undefined;
+    if (!this.settings.autoApprovalEnabled) return;
+    const timer = setInterval(() => { this.beginOldestApprovalSweep(); }, this.settings.autoApprovalIntervalMinutes * 60_000);
+    timer.unref();
+    this.approvalTimer = timer;
+  }
+  private async runOldestApprovalSweep() {
+    const seen = new Set<string>();
+    const status = this.approvalStatus;
+    try {
+      while (true) {
+        const pending = (await this.memory.candidates())
+          .filter((candidate) => !seen.has(candidate.id))
+          .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+        status.remaining = pending.length;
+        const batch = pending.slice(0, approvalBatchSize);
+        if (!batch.length) break;
+        for (const candidate of batch) seen.add(candidate.id);
+        const outcome = await this.autoApproveCandidates(batch.map((candidate) => ({ id: candidate.id, expectedRevision: candidate.revision })));
+        status.scanned += batch.length;
+        status.promoted += outcome.promoted;
+        status.archived += outcome.archived;
+        status.kept += outcome.kept;
+        status.failed += outcome.failed;
+        status.remaining = pending.length - batch.length;
+      }
+    } catch (error) {
+      status.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      status.running = false;
+      status.finishedAt = now();
+    }
   }
 
   async autoReviewCandidates() {

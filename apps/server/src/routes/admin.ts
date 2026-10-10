@@ -64,6 +64,8 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (app: F
       if (!parsed.success) return reply.code(400).send({ error: "需要 1–200 条候选及各自的 expectedRevision" });
       return runtime.autoApproveCandidates(parsed.data.candidates);
     });
+    protectedApp.post("/candidates/auto-approve/oldest", async () => runtime.beginOldestApprovalSweep());
+    protectedApp.get("/candidates/auto-approve/status", async () => runtime.approvalSweepStatus());
     protectedApp.get("/rag/search", async (request) => {
       const query = z.object({ projectId: z.string().optional(), query: z.string().default(""), limit: z.coerce.number().int().min(1).max(100).optional(), minScore: z.coerce.number().min(0).max(20).optional() }).parse(request.query);
       return runtime.searchRag(query);

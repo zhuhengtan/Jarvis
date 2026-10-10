@@ -52,3 +52,5 @@ if (existsSync(adminDist)) {
 }
 
 await app.listen({ port, host });
+runtime.startAutoApprovalSchedule();
+if ((await runtime.getSettings()).autoApprovalEnabled) runtime.beginOldestApprovalSweep();
