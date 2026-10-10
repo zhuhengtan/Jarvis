@@ -77,6 +77,7 @@ export const api = {
   testOllama: (): Promise<{ ok: boolean; message: string; model?: string }> => client.post("/settings/ollama/test"),
   testEmbedding: (): Promise<{ ok: boolean; message: string; model?: string; dimensions?: number }> => client.post("/settings/embedding/test"),
   autoReviewCandidates: (): Promise<AutoReviewResult> => client.post("/candidates/auto-review"),
+  autoApproveCandidates: (candidates: Array<{ id: string; expectedRevision: number }>): Promise<{ promoted: number; archived: number; kept: number; failed: number; results: Array<{ id: string; action: "promote" | "archive" | "keep" | "failed"; reason?: string }> }> => client.post("/candidates/auto-approve", { candidates }),
   searchRag: (params: { query?: string; projectId?: string; minScore?: number; limit?: number }): Promise<RagResult[]> => client.get("/rag/search", { params }),
 
   // Candidates

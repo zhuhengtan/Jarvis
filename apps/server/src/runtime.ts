@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+
 import { basename, join, resolve } from "node:path";
 import { DefaultContextEngine } from "@jarvis/context";
 import { AgentManager } from "@jarvis/agents";
@@ -9,7 +10,8 @@ import { ReflectionEngine } from "@jarvis/reflection";
 import { OllamaProvider } from "@jarvis/providers";
 import { ToolGateway } from "@jarvis/tools";
 import { IdentityService } from "./identity.js";
-import { closeSessionInput, eventInput, experienceInput, goalInput, openSessionInput, buildContextInput, retrieveContextInput, runtimeSettingsInput, newId, now, type MemoryRecord, type SkillBundle, type ProjectIdentity, type RuntimeSettings } from "@jarvis/shared";
+import { prepareCandidateReview } from "./candidate-review.js";
+import { autoApproveCandidatesInput, closeSessionInput, eventInput, experienceInput, goalInput, openSessionInput, buildContextInput, retrieveContextInput, runtimeSettingsInput, newId, now, type MemoryRecord, type SkillBundle, type ProjectIdentity, type RuntimeSettings } from "@jarvis/shared";
 
 export interface RuntimeConfig { assistantName?: string; memoryRoot: string; skillsRoot: string; databaseUrl?: string; }
 const defaultSettings: RuntimeSettings = { provider: "ollama", ollamaBaseUrl: process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434", ollamaModel: process.env.OLLAMA_MODEL?.trim() || "llama3.2", embeddingProvider: "none", embeddingBaseUrl: process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434", embeddingModel: process.env.OLLAMA_EMBEDDING_MODEL?.trim() || "nomic-embed-text", ragMinScore: 1, ragMaxResults: 12, ragMemoryLimit: 12, ragRecentEventLimit: 8, ragSkillLimit: 5, ragIncludeGlobal: true, autoConsolidation: true };
@@ -111,6 +113,65 @@ export class JarvisRuntime {
   async archiveCandidate(id: string, expectedRevision?: number) { return this.memory.archiveCandidate(id, expectedRevision); }
   async reassignCandidate(id: string, projectId: string, expectedRevision?: number) { const project = (await this.dynamic.listProjects()).find((item) => item.id === projectId); if (!project) throw new Error("Target project not found"); return this.memory.reassignCandidate(id, projectId, expectedRevision); }
   async consolidateMemory() { return this.memory.consolidate(); }
+  async autoApproveCandidates(selections: Array<{ id: string; expectedRevision: number }>) {
+    const { candidates: selected } = autoApproveCandidatesInput.parse({ candidates: selections });
+    if (this.settings.provider !== "ollama" || !this.settings.ollamaModel.trim()) throw new Error("审核模型未配置");
+    const provider = new OllamaProvider(this.settings.ollamaBaseUrl, this.settings.ollamaModel);
+    const current = new Map((await this.memory.candidates()).map((candidate) => [candidate.id, candidate]));
+    let promoted = 0;
+    let archived = 0;
+    let kept = 0;
+    let failed = 0;
+    const results: Array<{ id: string; action: "promote" | "archive" | "keep" | "failed"; reason?: string }> = [];
+    for (const [id, expectedRevision] of new Map(selected.map(item => [item.id, item.expectedRevision]))) {
+      const candidate = current.get(id);
+      if (!candidate) {
+        failed += 1;
+        results.push({ id, action: "failed", reason: "候选不存在或已不是待审状态" });
+        continue;
+      }
+      if (candidate.revision !== expectedRevision) {
+        failed += 1;
+        results.push({ id, action: "failed", reason: "候选版本已变化，请刷新后重新选择" });
+        continue;
+      }
+      let review: Awaited<ReturnType<OllamaProvider["reviewCandidate"]>>;
+      try {
+        const prepared = await prepareCandidateReview(candidate, this.dynamic, this.memory);
+        if ("reason" in prepared) {
+          kept += 1;
+          results.push({ id, action: "keep", reason: prepared.reason });
+          continue;
+        }
+        review = await provider.reviewCandidate(candidate, prepared.context);
+        if (!review.error && (review.action === "promote" || review.action === "archive")) {
+          await this.memory.applyReviewedDecision(candidate, expectedRevision, review.action, prepared.context.memories);
+          if (review.action === "promote") promoted += 1;
+          else archived += 1;
+          results.push({ id, action: review.action, reason: review.reason });
+          continue;
+        }
+      } catch (error) {
+        failed += 1;
+        results.push({ id, action: "failed", reason: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
+      if (review.error) {
+        failed += 1;
+        results.push({ id, action: "failed", reason: review.reason });
+        continue;
+      }
+      if (review.action === "keep") {
+        kept += 1;
+        results.push({ id, action: "keep", reason: review.reason });
+        continue;
+      }
+      failed += 1;
+      results.push({ id, action: "failed", reason: "审核模型返回了无效动作" });
+    }
+    return { promoted, archived, kept, failed, results };
+  }
+
   async autoReviewCandidates() {
     if (this.settings.provider !== "ollama" || !this.settings.ollamaModel.trim()) throw new Error("审核模型未配置");
     const reviewer = new OllamaProvider(this.settings.ollamaBaseUrl, this.settings.ollamaModel);
@@ -121,7 +182,13 @@ export class JarvisRuntime {
       while (queue.length) {
         const candidate = queue.shift();
         if (!candidate) return;
-        decisions.push({ candidate, decision: await reviewer.reviewCandidate(candidate) });
+        try {
+          const prepared = await prepareCandidateReview(candidate, this.dynamic, this.memory);
+          const decision = "reason" in prepared ? { action: "keep" as const, reason: prepared.reason } : await reviewer.reviewCandidate(candidate, prepared.context);
+          decisions.push({ candidate, decision });
+        } catch (error) {
+          decisions.push({ candidate, decision: { action: "keep", reason: error instanceof Error ? error.message : String(error), error: true } });
+        }
       }
     };
     await Promise.all(Array.from({ length: Math.min(3, candidates.length) }, () => reviewWorker()));
@@ -129,6 +196,7 @@ export class JarvisRuntime {
     const recommendations = decisions.filter(({ decision }) => !decision.error).map(({ candidate, decision }) => ({
       id: candidate.id, title: candidate.title, expectedRevision: candidate.revision, action: decision.action, reason: decision.reason,
     }));
+    // auto-review is advisory only: it NEVER persists decisions to the candidate store.
     return { total: candidates.length, promoted: 0, archived: 0, kept: recommendations.length, failed: decisions.length - recommendations.length, recommendations };
   }
 

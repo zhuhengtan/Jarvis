@@ -9,6 +9,10 @@ if (mode === "embedding") {
   const engine = new FileMemoryEngine(store, new JsonlDynamicStore(root));
   const record = await store.get(id);
   if (!record) throw new Error("Missing fixture");
-  try { await engine.promote({ record, expectedRevision: 1 }); console.log("committed"); }
+  try {
+    if (mode === "review-promote") await engine.applyReviewedDecision(record, 1, "promote", []);
+    else await engine.promote({ record, expectedRevision: 1 });
+    console.log("committed");
+  }
   catch (error) { if ((error as { statusCode?: number }).statusCode !== 409) throw error; console.log("conflict"); }
 }

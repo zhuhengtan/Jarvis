@@ -8,6 +8,8 @@ export type MemoryStatus = "candidate" | "active" | "archived";
 
 export interface ProjectIdentity { id: string; workspace: string; gitRemote?: string; name: string; description?: string; keywords?: string[]; workspaces?: string[]; }
 export interface MemoryRecord { id: string; revision: number; scope: MemoryScope; projectId?: string; kind: MemoryKind; title: string; content: string; summary?: string; applicability?: string[]; verification?: string; status: MemoryStatus; sourceRefs: string[]; createdAt: string; updatedAt: string; }
+export interface MemorySourceEvidence { id: string; projectId: string; content: string; }
+export interface CandidateReviewContext { sources: MemorySourceEvidence[]; memories: MemoryRecord[]; }
 export interface Session { id: string; projectId: string; workspace: string; client: string; task: string; mode?: "work" | "maintenance" | "unassigned"; status: "active" | "closed"; createdAt: string; updatedAt: string; }
 export interface Event { id: string; sessionId: string; type: "observation" | "action" | "result" | "system"; content: string; occurredAt: string; }
 export interface Goal { id: string; projectId?: string; title: string; status: "active" | "completed" | "blocked"; updatedAt: string; }
@@ -28,6 +30,7 @@ export const eventInput = z.object({ sessionId: z.string().min(1), type: z.enum(
 export const experienceInput = z.object({ sessionId: z.string().min(1), summary: z.string().min(1).max(20_000), decisions: z.array(z.string().max(2_000)).default([]), failures: z.array(z.string().max(2_000)).default([]), nextSteps: z.array(z.string().max(2_000)).default([]) });
 export const goalInput = z.object({ projectId: z.string().min(1), title: z.string().min(1).max(2_000), status: z.enum(["active", "completed", "blocked"]).default("active") });
 export const closeSessionInput = experienceInput.extend({ result: z.enum(["success", "failure", "partial"]) });
+export const autoApproveCandidatesInput = z.object({ candidates: z.array(z.object({ id: z.string().min(1).max(200), expectedRevision: z.number().int().positive() })).min(1).max(200).refine(items => items.every(item => items.find(other => other.id === item.id)?.expectedRevision === item.expectedRevision), "同一候选的 expectedRevision 必须一致") });
 
 export const adminLoginInput = z.object({ token: z.string().min(1) });
 export const updateCandidateInput = z.object({ expectedRevision: z.number().int().positive(), title: z.string().min(1).optional(), content: z.string().min(1).optional(), kind: z.enum(memoryKinds).optional() });

@@ -52,3 +52,14 @@ it("keeps an in-flight embedding associated with its original model", async () =
   expect(await index.get(c.id, "original")).toEqual([1, 0]);
   expect(await index.get(c.id, "replacement")).toBeUndefined();
 });
+
+it("only one OS process can approve duplicate candidates from the same reviewed context", async () => {
+  const root = await fixture(); const store = new MarkdownMemoryStore(join(root, "memory"));
+  const engine = new FileMemoryEngine(store, new JsonlDynamicStore(root));
+  const first = await engine.saveCandidate({ scope: "project", projectId: "p", kind: "fact", title: "First", content: "Same content", sourceRefs: [] });
+  const second = await engine.saveCandidate({ scope: "project", projectId: "p", kind: "fact", title: "Second", content: "Same content", sourceRefs: [] });
+  const results = await Promise.all([child("review-promote", root, first.id), child("review-promote", root, second.id)]);
+  expect(results.map(result => result.stdout.trim()).sort()).toEqual(["committed", "conflict"]);
+  expect((await engine.allMemories()).filter(record => record.status === "active")).toHaveLength(1);
+  expect(await engine.candidates()).toHaveLength(1);
+}, 15_000);

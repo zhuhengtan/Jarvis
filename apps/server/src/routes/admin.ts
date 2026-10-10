@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import type { JarvisRuntime } from "../runtime.js";
-import { updateCandidateInput, registerProjectInput, skillBundleInput } from "@jarvis/shared";
+import { autoApproveCandidatesInput, updateCandidateInput, registerProjectInput, skillBundleInput } from "@jarvis/shared";
 
 interface AdminRoutesOptions {
   runtime: JarvisRuntime;
@@ -59,6 +59,11 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (app: F
     protectedApp.post("/settings/ollama/test", async () => runtime.testOllama());
     protectedApp.post("/settings/embedding/test", async () => runtime.testEmbedding());
     protectedApp.post("/candidates/auto-review", async () => runtime.autoReviewCandidates());
+    protectedApp.post("/candidates/auto-approve", async (request, reply) => {
+      const parsed = autoApproveCandidatesInput.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "需要 1–200 条候选及各自的 expectedRevision" });
+      return runtime.autoApproveCandidates(parsed.data.candidates);
+    });
     protectedApp.get("/rag/search", async (request) => {
       const query = z.object({ projectId: z.string().optional(), query: z.string().default(""), limit: z.coerce.number().int().min(1).max(100).optional(), minScore: z.coerce.number().min(0).max(20).optional() }).parse(request.query);
       return runtime.searchRag(query);

@@ -51,6 +51,8 @@ export const CandidatesPage: React.FC = () => {
   const [assignment, setAssignment] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [autoReviewing, setAutoReviewing] = useState(false);
+  const [autoApproving, setAutoApproving] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   const loadCandidates = async () => {
     setLoading(true);
@@ -109,6 +111,43 @@ export const CandidatesPage: React.FC = () => {
     } finally {
       setAutoReviewing(false);
     }
+  };
+
+  const handleAutoApprove = () => {
+    if (autoApproving) return;
+    if (selectedRowKeys.length === 0) {
+      message.warning("请先选择要持久化写入的候选记忆");
+      return;
+    }
+    const selected = candidates.filter(record => selectedRowKeys.includes(record.id)).map(record => ({ id: record.id, expectedRevision: record.revision }));
+    if (selected.length !== selectedRowKeys.length) {
+      setSelectedRowKeys([]);
+      message.warning("候选列表已变化，请重新选择");
+      return;
+    }
+    setAutoApproving(true);
+    Modal.confirm({
+      title: "执行自动审批",
+      content: `将让本机 Ollama 判定选中的 ${selected.length} 条候选，并按判定提升或归档。来源不足、未归属或不确定的条目会保留；版本变化的条目需要刷新后重试。`,
+      okText: "执行",
+      cancelText: "取消",
+      onCancel: () => setAutoApproving(false),
+      onOk: async () => {
+        try {
+          const outcome = await api.autoApproveCandidates(selected);
+          Modal.info({
+            title: "自动审批已执行",
+            content: <div>已按本机 Ollama 判定处理：提升 {outcome.promoted}、归档 {outcome.archived}、保留 {outcome.kept}、失败 {outcome.failed}。{outcome.results.filter(item => item.action === "keep" || item.action === "failed").map(item => <p key={item.id}>{candidates.find(record => record.id === item.id)?.title ?? item.id}：{item.reason}</p>)}</div>,
+          });
+          setSelectedRowKeys([]);
+          await loadCandidates();
+        } catch (err: any) {
+          message.error(err.message || "自动审批失败");
+        } finally {
+          setAutoApproving(false);
+        }
+      },
+    });
   };
 
   const handleOpenEdit = (record: MemoryRecord) => {
@@ -274,9 +313,14 @@ export const CandidatesPage: React.FC = () => {
         extra={
           <Space>
             {settings?.provider === "ollama" && settings.ollamaModel.trim() && (
-              <Button type="primary" icon={<RobotOutlined />} onClick={handleAutoReview} loading={autoReviewing}>
-                生成审核建议
-              </Button>
+              <>
+                <Button icon={<RobotOutlined />} onClick={handleAutoApprove} disabled={selectedRowKeys.length === 0 || autoApproving || autoReviewing} loading={autoApproving}>
+                  执行自动审批（持久化写入）
+                </Button>
+                <Button type="primary" icon={<RobotOutlined />} onClick={handleAutoReview} loading={autoReviewing} disabled={autoApproving}>
+                  生成审核建议
+                </Button>
+              </>
             )}
             <Button icon={<ReloadOutlined />} onClick={loadCandidates} loading={loading}>
               刷新列表
@@ -289,6 +333,7 @@ export const CandidatesPage: React.FC = () => {
           columns={columns}
           dataSource={candidates}
           loading={loading}
+          rowSelection={{ selectedRowKeys, onChange: (keys) => setSelectedRowKeys(keys) }}
           pagination={{ pageSize: 10 }}
         />
       </Card>

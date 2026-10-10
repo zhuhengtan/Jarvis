@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Pool } from "pg";
 import type { MemoryEngine } from "@jarvis/core";
-import { assertSafeId, confinedPath, atomicWriteFile, withFileLock, InvalidPathError, RevisionConflictError, newId, now, redactSecrets, type Event, type Experience, type Goal, type MemoryRecord, type MemoryScope, type MemoryStatus, type ProjectIdentity, type Session } from "@jarvis/shared";
+import { assertSafeId, confinedPath, atomicWriteFile, withFileLock, InvalidPathError, RevisionConflictError, newId, now, redactSecrets, type Event, type Experience, type Goal, type MemoryRecord, type MemorySourceEvidence, type MemoryScope, type MemoryStatus, type ProjectIdentity, type Session } from "@jarvis/shared";
 import { cosine, JsonEmbeddingIndex } from "./embeddings.js";
 
 const exec = promisify(execFile);
@@ -179,13 +179,13 @@ export class MarkdownMemoryStore {
       await this.write(record);
     });
   }
-  async mutate(id: string, expectedRevision: number | undefined, change: (record: MemoryRecord) => MemoryRecord): Promise<MemoryRecord> {
+  async mutate(id: string, expectedRevision: number | undefined, change: (record: MemoryRecord) => MemoryRecord | Promise<MemoryRecord>): Promise<MemoryRecord> {
     assertSafeId(id);
     return withFileLock(this.root, "memory-write-lock", async () => {
       const current = await this.get(id);
       if (!current) throw new RevisionConflictError("Memory no longer exists");
       if (expectedRevision !== undefined && current.revision !== expectedRevision) throw new RevisionConflictError("Memory revision conflict; reload before retrying");
-      const next = { ...change(current), id: current.id, revision: current.revision + 1, updatedAt: now() };
+      const next = { ...await change(current), id: current.id, revision: current.revision + 1, updatedAt: now() };
       const previousPath = await this.path(current);
       const nextPath = await this.path(next);
       await this.write(next);
@@ -245,6 +245,7 @@ export interface DynamicStore {
   initialize(): Promise<void>;
   createSession(input: Omit<Session, "id" | "createdAt" | "updatedAt" | "status">): Promise<Session>;
   getSession(id: string): Promise<Session | undefined>;
+  getSourceEvidence(id: string): Promise<MemorySourceEvidence | undefined>;
   listSessions(query?: { projectId?: string; status?: "active" | "closed"; limit?: number }): Promise<Session[]>;
   closeSession(id: string): Promise<void>;
   appendEvent(input: Omit<Event, "id" | "occurredAt">): Promise<Event>;
@@ -265,6 +266,15 @@ export class JsonlDynamicStore implements DynamicStore {
   async initialize() { try { const raw = await readFile(join(this.root, "events.jsonl"), "utf8"); for (const line of raw.split("\n")) { if (!line.trim()) continue; const item = JSON.parse(line); if (item.type === "session") this.sessions.set(item.session.id, item.session); if (item.type === "event") this.events.push(item.event); if (item.type === "goal") this.goals.set(item.goal.id, item.goal); if (item.type === "experience") this.experiences.push(item.experience); if (item.type === "project") this.projects.set(item.project.id, item.project); } } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } }
   async createSession(input: Omit<Session, "id" | "createdAt" | "updatedAt" | "status">): Promise<Session> { const session = { ...input, id: newId("session"), status: "active" as const, createdAt: now(), updatedAt: now() }; this.sessions.set(session.id, session); await this.persist({ type: "session", session }); return session; }
   async getSession(id: string) { return this.sessions.get(id); }
+  async getSourceEvidence(id: string): Promise<MemorySourceEvidence | undefined> {
+    const experience = this.experiences.find(item => item.id === id);
+    if (experience) return { id, projectId: experience.projectId, content: redactSecrets(JSON.stringify(experience)) };
+    const event = this.events.find(item => item.id === id);
+    if (event) return { id, projectId: event.projectId, content: redactSecrets(JSON.stringify(event)) };
+    const session = this.sessions.get(id);
+    if (session) return { id, projectId: session.projectId, content: redactSecrets(JSON.stringify({ session, events: this.events.filter(item => item.sessionId === id) })) };
+    return undefined;
+  }
   async listSessions(query?: { projectId?: string; status?: "active" | "closed"; limit?: number }) {
     let result = [...this.sessions.values()];
     if (query?.projectId) result = result.filter((s) => s.projectId === query.projectId);
@@ -298,6 +308,23 @@ export class PostgresDynamicStore implements DynamicStore {
   async migrate() { await this.pool.query(`CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS sessions (id text primary key, project_id text not null, workspace text not null, client text not null, task text not null, mode text not null default 'work', status text not null, created_at timestamptz not null, updated_at timestamptz not null); ALTER TABLE sessions ADD COLUMN IF NOT EXISTS mode text not null default 'work'; CREATE TABLE IF NOT EXISTS events (id text primary key, session_id text not null references sessions(id), type text not null, content text not null, occurred_at timestamptz not null); CREATE TABLE IF NOT EXISTS goals (id text primary key, project_id text not null, title text not null, status text not null, updated_at timestamptz not null); CREATE TABLE IF NOT EXISTS experiences (id text primary key, session_id text not null references sessions(id), project_id text not null, summary text not null, decisions jsonb not null, failures jsonb not null, next_steps jsonb not null, created_at timestamptz not null); CREATE TABLE IF NOT EXISTS projects (id text primary key, workspace text not null, name text not null, git_remote text, description text, keywords jsonb not null default '[]', workspaces jsonb not null default '[]'); ALTER TABLE projects ADD COLUMN IF NOT EXISTS description text; ALTER TABLE projects ADD COLUMN IF NOT EXISTS keywords jsonb not null default '[]'; ALTER TABLE projects ADD COLUMN IF NOT EXISTS workspaces jsonb not null default '[]'; CREATE INDEX IF NOT EXISTS events_session_idx ON events(session_id, occurred_at DESC); CREATE INDEX IF NOT EXISTS goals_project_idx ON goals(project_id, updated_at DESC); CREATE INDEX IF NOT EXISTS experiences_project_idx ON experiences(project_id, created_at DESC);`); }
   async createSession(input: Omit<Session, "id" | "createdAt" | "updatedAt" | "status">) { const session = { ...input, id: newId("session"), mode: input.mode ?? "work", status: "active" as const, createdAt: now(), updatedAt: now() }; await this.pool.query("INSERT INTO sessions (id,project_id,workspace,client,task,mode,status,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", [session.id, session.projectId, session.workspace, session.client, session.task, session.mode, session.status, session.createdAt, session.updatedAt]); return session; }
   async getSession(id: string) { const row = (await this.pool.query(`SELECT id, project_id AS "projectId", workspace, client, task, mode, status, created_at AS "createdAt", updated_at AS "updatedAt" FROM sessions WHERE id=$1`, [id])).rows[0]; return row as Session | undefined; }
+  async getSourceEvidence(id: string): Promise<MemorySourceEvidence | undefined> {
+    if (id.startsWith("experience_")) {
+      const row = (await this.pool.query(`SELECT id, project_id AS "projectId", summary, decisions, failures, next_steps AS "nextSteps" FROM experiences WHERE id=$1`, [id])).rows[0];
+      return row ? { id, projectId: row.projectId, content: redactSecrets(JSON.stringify(row)) } : undefined;
+    }
+    if (id.startsWith("event_")) {
+      const row = (await this.pool.query(`SELECT e.id, s.project_id AS "projectId", e.type, e.content FROM events e JOIN sessions s ON s.id=e.session_id WHERE e.id=$1`, [id])).rows[0];
+      return row ? { id, projectId: row.projectId, content: redactSecrets(JSON.stringify(row)) } : undefined;
+    }
+    if (id.startsWith("session_")) {
+      const session = await this.getSession(id);
+      if (!session) return undefined;
+      const events = (await this.pool.query(`SELECT id, type, content FROM events WHERE session_id=$1 ORDER BY occurred_at, id`, [id])).rows;
+      return { id, projectId: session.projectId, content: redactSecrets(JSON.stringify({ session, events })) };
+    }
+    return undefined;
+  }
   async listSessions(query?: { projectId?: string; status?: "active" | "closed"; limit?: number }) {
     const conditions: string[] = []; const values: unknown[] = [];
     if (query?.projectId) { values.push(query.projectId); conditions.push(`project_id = $${values.length}`); }
@@ -336,6 +363,9 @@ export { cosine, JsonEmbeddingIndex } from "./embeddings.js";
 
 export type MemoryEmbedder = { model: string; index: JsonEmbeddingIndex; embed: (texts: string[]) => Promise<number[][]> };
 const embeddingText = (record: MemoryRecord) => `${record.title} ${record.summary ?? ""} ${record.content}`;
+export const memoriesForReview = (candidate: MemoryRecord, records: MemoryRecord[]) => records.filter(record => record.status === "active" && (candidate.scope === "global" || record.scope === "global" || record.projectId === candidate.projectId));
+export const sameMemoryContent = (left: MemoryRecord, right: MemoryRecord) => left.content.trim().replace(/\s+/g, " ") === right.content.trim().replace(/\s+/g, " ");
+const memorySnapshot = (records: MemoryRecord[]) => JSON.stringify(records.map(record => [record.id, record.revision]).sort(([left], [right]) => String(left).localeCompare(String(right))));
 
 export class FileMemoryEngine implements MemoryEngine {
   private minScore = 0;
@@ -397,6 +427,19 @@ export class FileMemoryEngine implements MemoryEngine {
     });
     await this.indexRecord(active);
     return active;
+  }
+  async applyReviewedDecision(record: MemoryRecord, expectedRevision: number, action: "promote" | "archive", reviewedMemories: MemoryRecord[]) {
+    const updated = await this.store.mutate(record.id, expectedRevision, async current => {
+      if (current.status !== "candidate") throw new RevisionConflictError("Only a current candidate can be reviewed");
+      if (current.scope === "project" && (!current.projectId || ["maintenance", "unassigned"].includes(current.projectId))) throw new RevisionConflictError("Assign a concrete project before automatic review");
+      const memories = memoriesForReview(current, await this.store.listAll());
+      // Check under the same cross-process write lock as the candidate commit.
+      if (memorySnapshot(memories) !== memorySnapshot(reviewedMemories)) throw new RevisionConflictError("Review context changed; reload before retrying");
+      if (action === "promote" && memories.some(item => sameMemoryContent(item, current))) throw new RevisionConflictError("Duplicate memory; manual review required");
+      return { ...current, status: action === "promote" ? "active" : "archived" };
+    });
+    if (action === "promote") await this.indexRecord(updated);
+    return updated;
   }
   async consolidate() {
     const records = await this.store.listAll();
