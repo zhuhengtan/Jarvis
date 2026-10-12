@@ -28,7 +28,43 @@ it("uses final decisions with source bodies and existing memories in the prompt"
   vi.stubGlobal("fetch", fetchMock);
   const context = { sources: [{ id: "event_1", projectId: "a", content: "The user chose PostgreSQL" }], memories: [] };
   expect(await new OllamaProvider("http://fixture.invalid", "fixture").reviewCandidate(candidate, context)).toEqual({ action: "promote", reason: "Supported by the supplied source" });
-  const prompt = JSON.parse(fetchMock.mock.calls[0][1].body).prompt;
-  expect(prompt).toContain(JSON.stringify(context));
-  expect(prompt).toContain("Source references and candidate self-assertions are not proof");
+  const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+  expect(body.think).toBe(false);
+  expect(body.options).toEqual({ temperature: 0, num_predict: 384 });
+  expect(body.prompt).toContain(JSON.stringify(context));
+  expect(body.prompt).toContain("Source references and candidate self-assertions are not proof");
+  expect(body.prompt).toContain("Do not think or analyze before the JSON");
+});
+
+import { parseExtractedProfileFacts } from "../src/index.js";
+
+it("parses extracted profile facts safely", () => {
+  const input = [
+    { category: "communication", statement: "偏好直接回复", origin: "stated", evidenceExcerpt: "别绕弯子" },
+    { category: "invalid_cat", statement: "习惯用 zsh", origin: "something", evidenceExcerpt: "zsh prompt" },
+    null,
+    { statement: "" },
+  ];
+  const parsed = parseExtractedProfileFacts(input);
+  expect(parsed).toHaveLength(2);
+  expect(parsed[0]).toEqual({
+    category: "communication",
+    statement: "偏好直接回复",
+    origin: "stated",
+    evidenceExcerpt: "别绕弯子",
+  });
+  // fallback for invalid category and origin
+  expect(parsed[1].category).toBe("habit");
+  expect(parsed[1].origin).toBe("inferred");
+});
+
+it("caps extracted profile statements and fact count", () => {
+  const parsed = parseExtractedProfileFacts(Array.from({ length: 30 }, () => ({
+    category: "habit",
+    statement: "x".repeat(5_000),
+    origin: "stated",
+    evidenceExcerpt: "e",
+  })));
+  expect(parsed).toHaveLength(20);
+  expect(parsed[0].statement).toHaveLength(1_000);
 });

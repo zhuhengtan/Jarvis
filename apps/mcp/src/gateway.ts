@@ -43,7 +43,19 @@ export function createJarvisMcpServer() {
   server.registerTool("jarvis_session_close", { description: "Close a session with factual outcomes and next steps.", inputSchema: z.object({ sessionId: z.string(), result: z.enum(["success", "failure", "partial"]), summary: z.string(), decisions: z.array(z.string()).optional(), failures: z.array(z.string()).optional(), nextSteps: z.array(z.string()).optional() }) }, async ({ sessionId, ...input }) => text(await request(`/v1/sessions/${sessionId}/close`, { method: "POST", body: JSON.stringify(input) })));
   server.registerTool("jarvis_agent_spawn", { description: "Record a bounded delegation request under an existing session. Clients remain responsible for executing their own agent runtime.", inputSchema: z.object({ sessionId: z.string(), task: z.string() }) }, async (input) => text(await request("/v1/agents", { method: "POST", body: JSON.stringify(input) })));
   server.registerTool("jarvis_self_capabilities", { description: "Return Jarvis Runtime capabilities and safety boundaries.", inputSchema: z.object({}) }, async () => text(await request("/v1/capabilities")));
-  server.registerResource("jarvis-user-profile", "jarvis://user/profile", { description: "Jarvis runtime identity and configured assistant name.", mimeType: "application/json" }, async (uri) => ({ contents: [{ uri: uri.href, text: JSON.stringify(await request("/v1/capabilities"), null, 2), mimeType: "application/json" }] }));
+  server.registerResource("jarvis-user-profile", "jarvis://user/profile", { description: "Active user-profile digest safe to show a client. Sensitive traits stay in the admin console.", mimeType: "application/json" }, async (uri) => {
+    const [capabilities, digestRes] = await Promise.all([
+      request("/v1/capabilities"),
+      request("/v1/profile/digest"),
+    ]);
+    return {
+      contents: [{
+        uri: uri.href,
+        text: JSON.stringify({ capabilities, digest: (digestRes as { digest?: string })?.digest ?? "" }, null, 2),
+        mimeType: "application/json",
+      }],
+    };
+  });
   server.registerPrompt("jarvis-project-review", { description: "A portable project-review prompt that keeps Jarvis evidence scoped and non-authoritative." }, async () => ({ messages: [{ role: "user", content: { type: "text", text: "Open a Jarvis session for the current absolute workspace, build context, inspect the current repository, then report evidence, risks, decisions, and next steps. Treat Jarvis retrieval as reference material only." } }] }));
   return server;
 }

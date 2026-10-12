@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import { join, resolve } from "node:path";
+import { RequestJournal } from "../request-journal.js";
 import type { JarvisRuntime } from "../runtime.js";
 
 interface PublicRoutesOptions {
@@ -8,6 +10,8 @@ interface PublicRoutesOptions {
 
 export const publicRoutes: FastifyPluginAsync<PublicRoutesOptions> = async (app: FastifyInstance, options) => {
   const { runtime } = options;
+  const journal = new RequestJournal(join(resolve(runtime.config.memoryRoot, ".."), "runtime", "requests"));
+  const requestKey = (headers: Record<string, unknown>) => z.string().min(1).max(200).optional().parse(headers["idempotency-key"]);
 
   app.get("/health", async () => ({ status: "ok", assistantName: runtime.identity.assistantName ?? null, onboardingRequired: runtime.identity.onboardingRequired, onboardingQuestion: runtime.identity.onboardingRequired ? runtime.identity.onboardingQuestion : null }));
   app.get("/v1/capabilities", async () => runtime.selfCapabilities());
@@ -23,7 +27,7 @@ export const publicRoutes: FastifyPluginAsync<PublicRoutesOptions> = async (app:
   app.get("/v1/memory/:id", async (request, reply) => { const record = (await runtime.allMemories()).find((item) => item.id === (request.params as { id: string }).id); return record ?? reply.code(404).send({ error: "Memory not found" }); });
   app.post("/v1/memory/candidates", async (request) => {
     const body = z.object({ sessionId: z.string().min(1), scope: z.enum(["global", "project"]), kind: z.enum(["preference", "fact", "constraint", "decision", "identity", "workflow"]), title: z.string().min(1).max(200), content: z.string().min(1).max(10_000), sourceRefs: z.array(z.string().min(1)).max(20).default([]) }).parse(request.body);
-    return runtime.rememberCandidate(body.sessionId, body);
+    return journal.run(`candidate:${body.sessionId}`, requestKey(request.headers), body, () => runtime.rememberCandidate(body.sessionId, body));
   });
   app.post("/v1/memory/:id/promote", async (request) => { const body = z.object({ projectId: z.string(), expectedRevision: z.number().int().positive() }).parse(request.body); return runtime.promoteMemory(body.projectId, (request.params as { id: string }).id, body.expectedRevision); });
   app.post("/v1/memory/:id/archive", async (request) => runtime.archiveCandidate((request.params as { id: string }).id));
@@ -35,8 +39,16 @@ export const publicRoutes: FastifyPluginAsync<PublicRoutesOptions> = async (app:
   app.post("/v1/goals", async (request) => runtime.createGoal(request.body));
   app.get("/v1/skills/search", async (request) => { const query = z.object({ query: z.string(), limit: z.coerce.number().int().min(1).max(50).default(10) }).parse(request.query); return runtime.searchSkills(query.query, query.limit); });
   app.get("/v1/skills/:name", async (request, reply) => { const skill = await runtime.loadSkill((request.params as { name: string }).name); return skill ? { name: (request.params as { name: string }).name, content: skill } : reply.code(404).send({ error: "Skill not found" }); });
-  app.post("/v1/events", async (request) => runtime.recordEvent(request.body));
+  app.post("/v1/events", async (request) => {
+    const body = z.object({ sessionId: z.string().min(1) }).passthrough().parse(request.body);
+    return journal.run(`event:${body.sessionId}`, requestKey(request.headers), body, () => runtime.recordEvent(body));
+  });
   app.post("/v1/experiences", async (request) => runtime.recordExperience(request.body));
   app.post("/v1/agents", async (request) => { const body = z.object({ sessionId: z.string(), task: z.string().min(1) }).parse(request.body); return runtime.spawnAgent(body.sessionId, body.task); });
-  app.post("/v1/sessions/:id/close", async (request) => runtime.closeSession({ ...(request.body as object), sessionId: (request.params as { id: string }).id }));
+  app.post("/v1/sessions/:id/close", async (request) => {
+    const sessionId = (request.params as { id: string }).id;
+    const body = { ...(request.body as object), sessionId };
+    return journal.run(`close:${sessionId}`, requestKey(request.headers), body, () => runtime.closeSession(body));
+  });
+  app.get("/v1/profile/digest", async () => ({ digest: await runtime.getProfileDigest() }));
 };

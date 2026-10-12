@@ -13,6 +13,9 @@ import type {
   AutoReviewResult,
   ApprovalSweepStatus,
   RagResult,
+  ProfileItem,
+  ProfileCategory,
+  ProfileStatus,
 } from "../types";
 
 const client = axios.create({
@@ -149,4 +152,27 @@ export const api = {
   // Identity
   setAssistantName: (name: string): Promise<{ assistantName: string }> =>
     rootClient.put("/identity/name", { name }),
+
+  // User Profile (admin-authenticated; public clients only receive the filtered digest)
+  getProfiles: (): Promise<ProfileItem[]> => client.get("/profile"),
+
+  getProfileDigest: (): Promise<{ digest: string }> => client.get("/profile/digest"),
+
+  updateProfile: (
+    id: string,
+    data: {
+      expectedRevision: number;
+      statement?: string;
+      category?: ProfileCategory;
+      status?: ProfileStatus;
+      inject?: boolean;
+    }
+  ): Promise<ProfileItem> =>
+    client.patch(`/profile/${encodeURIComponent(id)}`, data),
+
+  deleteProfile: (id: string): Promise<{ ok: boolean }> =>
+    client.delete(`/profile/${encodeURIComponent(id)}`),
+
+  extractProfile: (sessionId: string): Promise<{ extracted: unknown[]; updated: ProfileItem[] }> =>
+    client.post("/profile/extract", { sessionId }),
 };

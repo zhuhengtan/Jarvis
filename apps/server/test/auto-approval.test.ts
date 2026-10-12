@@ -169,3 +169,44 @@ it("the HTTP path requires revisions and does not execute a thinking-only verdic
     expect(prompt).toContain(candidate.content);
   } finally { await app.close(); }
 });
+
+it("keeps a candidate when the full review context exceeds the limit", async () => {
+  const { runtime, create } = await fixture();
+  const bulky = await create("Bulky", "x".repeat(70_000));
+  await runtime.promoteCandidate(bulky.id, 1);
+  const candidate = await create("Supported", "Use PostgreSQL for events");
+  const review = vi.spyOn(OllamaProvider.prototype, "reviewCandidate").mockResolvedValue({ action: "promote", reason: "should not run" });
+  expect(await runtime.autoApproveCandidates(select(candidate))).toMatchObject({ promoted: 0, archived: 0, kept: 1, failed: 0 });
+  expect(review).not.toHaveBeenCalled();
+  expect((await runtime.allCandidates()).map(item => item.id)).toEqual([candidate.id]);
+});
+
+it("keeps candidates whose source text does not fit, including archive votes", async () => {
+  const { runtime, session, create } = await fixture();
+  const huge = await runtime.recordEvent({ sessionId: session.id, type: "result", content: "y".repeat(70_000) });
+  const blocked = await create("Huge source", "Use PostgreSQL", session.id, [huge.id]);
+  const noise = await create("Noise", "Archive this status note", session.id, [huge.id]);
+  const review = vi.spyOn(OllamaProvider.prototype, "reviewCandidate").mockResolvedValue({ action: "archive", reason: "should not run" });
+  expect(await runtime.autoApproveCandidates(select(blocked, noise))).toMatchObject({ promoted: 0, archived: 0, kept: 2, failed: 0 });
+  expect(review).not.toHaveBeenCalled();
+  expect((await runtime.allCandidates()).map(item => item.id).sort()).toEqual([blocked.id, noise.id].sort());
+});
+
+it("promotes only when every competing memory body is included", async () => {
+  const { runtime, create } = await fixture();
+  const existing = [];
+  for (let index = 0; index < 5; index += 1) {
+    existing.push(await create(`Independent rule ${index}`, `Unrelated body ${index}`));
+  }
+  for (const record of existing) await runtime.promoteCandidate(record.id, 1);
+  const candidate = await create("Supported choice", "Use PostgreSQL for events");
+  const review = vi.spyOn(OllamaProvider.prototype, "reviewCandidate").mockImplementation(async (_item, context) => {
+    expect(context?.truncated).toBeUndefined();
+    expect(context?.omittedMemoryCount).toBeUndefined();
+    expect(context?.memories.map(item => item.id).sort()).toEqual(existing.map(item => item.id).sort());
+    expect(context?.memories.every(item => item.content.length > 0)).toBe(true);
+    return { action: "promote", reason: "supported" };
+  });
+  expect(await runtime.autoApproveCandidates(select(candidate))).toMatchObject({ promoted: 1, kept: 0, failed: 0 });
+  expect(review).toHaveBeenCalledOnce();
+});

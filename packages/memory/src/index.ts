@@ -250,6 +250,7 @@ export interface DynamicStore {
   closeSession(id: string): Promise<void>;
   appendEvent(input: Omit<Event, "id" | "occurredAt">): Promise<Event>;
   recentEvents(projectId: string, limit: number): Promise<Event[]>;
+  sessionEvents(sessionId: string): Promise<Event[]>;
   saveGoal(input: Omit<Goal, "id" | "updatedAt">): Promise<Goal>;
   activeGoal(projectId: string): Promise<Goal | undefined>;
   listGoals(projectId: string): Promise<Goal[]>;
@@ -285,6 +286,7 @@ export class JsonlDynamicStore implements DynamicStore {
   async closeSession(id: string) { const session = this.sessions.get(id); if (!session) return; session.status = "closed"; session.updatedAt = now(); await this.persist({ type: "session", session }); }
   async appendEvent(input: Omit<Event, "id" | "occurredAt">) { const session = this.sessions.get(input.sessionId); if (!session) throw new Error("Unknown session"); const event = { ...input, id: newId("event"), occurredAt: now(), content: redactSecrets(input.content), projectId: session.projectId }; this.events.push(event); await this.persist({ type: "event", event }); return event; }
   async recentEvents(projectId: string, limit: number) { return this.events.filter((event) => event.projectId === projectId).slice(-limit).reverse().map(({ projectId: _, ...event }) => event); }
+  async sessionEvents(sessionId: string) { return this.events.filter((event) => event.sessionId === sessionId).map(({ projectId: _, ...event }) => event); }
   async saveGoal(input: Omit<Goal, "id" | "updatedAt">) { const goal = { ...input, id: newId("goal"), updatedAt: now() }; if (goal.status === "active") for (const existing of this.goals.values()) if (existing.projectId === goal.projectId && existing.status === "active") { existing.status = "completed"; existing.updatedAt = now(); await this.persist({ type: "goal", goal: existing }); } this.goals.set(goal.id, goal); await this.persist({ type: "goal", goal }); return goal; }
   async activeGoal(projectId: string) { return [...this.goals.values()].filter((goal) => goal.projectId === projectId && goal.status === "active").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]; }
   async listGoals(projectId: string) { return [...this.goals.values()].filter((goal) => goal.projectId === projectId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
@@ -337,6 +339,7 @@ export class PostgresDynamicStore implements DynamicStore {
   async closeSession(id: string) { await this.pool.query("UPDATE sessions SET status='closed', updated_at=now() WHERE id=$1", [id]); }
   async appendEvent(input: Omit<Event, "id" | "occurredAt">) { const event = { ...input, id: newId("event"), occurredAt: now(), content: redactSecrets(input.content) }; await this.pool.query("INSERT INTO events VALUES ($1,$2,$3,$4,$5)", [event.id, event.sessionId, event.type, event.content, event.occurredAt]); return event; }
   async recentEvents(projectId: string, limit: number) { const rows = (await this.pool.query(`SELECT e.id,e.session_id AS "sessionId",e.type,e.content,e.occurred_at AS "occurredAt" FROM events e JOIN sessions s ON s.id=e.session_id WHERE s.project_id=$1 ORDER BY e.occurred_at DESC LIMIT $2`, [projectId, limit])).rows; return rows as Event[]; }
+  async sessionEvents(sessionId: string) { const rows = (await this.pool.query(`SELECT id, session_id AS "sessionId", type, content, occurred_at AS "occurredAt" FROM events WHERE session_id=$1 ORDER BY occurred_at, id`, [sessionId])).rows; return rows as Event[]; }
   async saveGoal(input: Omit<Goal, "id" | "updatedAt">) { const goal = { ...input, id: newId("goal"), updatedAt: now() }; await this.pool.query("UPDATE goals SET status='completed',updated_at=now() WHERE project_id=$1 AND status='active'", [goal.projectId]); await this.pool.query("INSERT INTO goals VALUES ($1,$2,$3,$4,$5)", [goal.id, goal.projectId, goal.title, goal.status, goal.updatedAt]); return goal; }
   async activeGoal(projectId: string) { return (await this.pool.query(`SELECT id, project_id AS "projectId", title, status, updated_at AS "updatedAt" FROM goals WHERE project_id=$1 AND status='active' ORDER BY updated_at DESC LIMIT 1`, [projectId])).rows[0] as Goal | undefined; }
   async listGoals(projectId: string) { return (await this.pool.query(`SELECT id, project_id AS "projectId", title, status, updated_at AS "updatedAt" FROM goals WHERE project_id=$1 ORDER BY updated_at DESC`, [projectId])).rows as Goal[]; }
@@ -365,7 +368,7 @@ export type MemoryEmbedder = { model: string; index: JsonEmbeddingIndex; embed: 
 const embeddingText = (record: MemoryRecord) => `${record.title} ${record.summary ?? ""} ${record.content}`;
 export const memoriesForReview = (candidate: MemoryRecord, records: MemoryRecord[]) => records.filter(record => record.status === "active" && (candidate.scope === "global" || record.scope === "global" || record.projectId === candidate.projectId));
 export const sameMemoryContent = (left: MemoryRecord, right: MemoryRecord) => left.content.trim().replace(/\s+/g, " ") === right.content.trim().replace(/\s+/g, " ");
-const memorySnapshot = (records: MemoryRecord[]) => JSON.stringify(records.map(record => [record.id, record.revision]).sort(([left], [right]) => String(left).localeCompare(String(right))));
+const memorySnapshot = (records: Array<{ id: string; revision: number }>) => JSON.stringify(records.map(record => [record.id, record.revision]).sort(([left], [right]) => String(left).localeCompare(String(right))));
 
 export class FileMemoryEngine implements MemoryEngine {
   private minScore = 0;
@@ -428,7 +431,7 @@ export class FileMemoryEngine implements MemoryEngine {
     await this.indexRecord(active);
     return active;
   }
-  async applyReviewedDecision(record: MemoryRecord, expectedRevision: number, action: "promote" | "archive", reviewedMemories: MemoryRecord[]) {
+  async applyReviewedDecision(record: MemoryRecord, expectedRevision: number, action: "promote" | "archive", reviewedMemories: Array<{ id: string; revision: number }>) {
     const updated = await this.store.mutate(record.id, expectedRevision, async current => {
       if (current.status !== "candidate") throw new RevisionConflictError("Only a current candidate can be reviewed");
       if (current.scope === "project" && (!current.projectId || ["maintenance", "unassigned"].includes(current.projectId))) throw new RevisionConflictError("Assign a concrete project before automatic review");

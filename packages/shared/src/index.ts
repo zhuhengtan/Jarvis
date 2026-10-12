@@ -9,19 +9,20 @@ export type MemoryStatus = "candidate" | "active" | "archived";
 export interface ProjectIdentity { id: string; workspace: string; gitRemote?: string; name: string; description?: string; keywords?: string[]; workspaces?: string[]; }
 export interface MemoryRecord { id: string; revision: number; scope: MemoryScope; projectId?: string; kind: MemoryKind; title: string; content: string; summary?: string; applicability?: string[]; verification?: string; status: MemoryStatus; sourceRefs: string[]; createdAt: string; updatedAt: string; }
 export interface MemorySourceEvidence { id: string; projectId: string; content: string; }
-export interface CandidateReviewContext { sources: MemorySourceEvidence[]; memories: MemoryRecord[]; }
+export interface CandidateReviewMemory { id: string; revision: number; kind: MemoryKind; title: string; content: string; projectId?: string; }
+export interface CandidateReviewContext { sources: MemorySourceEvidence[]; memories: Array<MemoryRecord | CandidateReviewMemory>; truncated?: "memories" | "sources" | "both"; omittedMemoryCount?: number; }
 export interface Session { id: string; projectId: string; workspace: string; client: string; task: string; mode?: "work" | "maintenance" | "unassigned"; status: "active" | "closed"; createdAt: string; updatedAt: string; }
 export interface Event { id: string; sessionId: string; type: "observation" | "action" | "result" | "system"; content: string; occurredAt: string; }
 export interface Goal { id: string; projectId?: string; title: string; status: "active" | "completed" | "blocked"; updatedAt: string; }
 export interface Experience { id: string; sessionId: string; projectId: string; summary: string; decisions: string[]; failures: string[]; nextSteps: string[]; createdAt: string; }
 export interface Evaluation { id: string; sessionId: string; projectId: string; score: number; rationale: string; createdAt: string; }
 export interface ActionAudit { id: string; sessionId: string; action: string; permission: string; outcome: "allowed" | "denied" | "completed" | "failed"; detail: string; createdAt: string; }
-export interface ContextPackage { session: Session; project: ProjectIdentity; activeGoal?: Goal; memories: MemoryRecord[]; recentEvents: Event[]; recommendedSkills: string[]; text: string; }
+export interface ContextPackage { session: Session; project: ProjectIdentity; activeGoal?: Goal; memories: MemoryRecord[]; recentEvents: Event[]; recommendedSkills: string[]; text: string; profileDigest?: string; }
 export const extractedKinds = ["decision", "constraint", "fact", "workflow"] as const;
 export type ExtractedKind = (typeof extractedKinds)[number];
 export interface ExtractedFact { kind: ExtractedKind; title: string; content: string; }
 
-export interface RuntimeSettings { provider: "ollama" | "none"; ollamaBaseUrl: string; ollamaModel: string; embeddingProvider: "ollama" | "none"; embeddingBaseUrl: string; embeddingModel: string; ragMinScore: number; ragMaxResults: number; ragMemoryLimit: number; ragRecentEventLimit: number; ragSkillLimit: number; ragIncludeGlobal: boolean; autoConsolidation: boolean; autoApprovalEnabled: boolean; autoApprovalIntervalMinutes: number; }
+export interface RuntimeSettings { provider: "ollama" | "none"; ollamaBaseUrl: string; ollamaModel: string; profileModel?: string; embeddingProvider: "ollama" | "none"; embeddingBaseUrl: string; embeddingModel: string; ragMinScore: number; ragMaxResults: number; ragMemoryLimit: number; ragRecentEventLimit: number; ragSkillLimit: number; ragIncludeGlobal: boolean; autoConsolidation: boolean; autoApprovalEnabled: boolean; autoApprovalIntervalMinutes: number; }
 
 export const openSessionInput = z.object({ client: z.string().min(1).max(80), workspace: z.string().min(1), task: z.string().min(1).max(10_000), mode: z.enum(["work", "maintenance", "unassigned"]).default("work") });
 export const buildContextInput = z.object({ sessionId: z.string().min(1), task: z.string().min(1), tokenBudget: z.number().int().min(500).max(50_000).default(8_000) });
@@ -35,7 +36,7 @@ export const autoApproveCandidatesInput = z.object({ candidates: z.array(z.objec
 export const adminLoginInput = z.object({ token: z.string().min(1) });
 export const updateCandidateInput = z.object({ expectedRevision: z.number().int().positive(), title: z.string().min(1).optional(), content: z.string().min(1).optional(), kind: z.enum(memoryKinds).optional() });
 export const listSessionsInput = z.object({ projectId: z.string().optional(), status: z.enum(["active", "closed"]).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) });
-export const runtimeSettingsInput = z.object({ provider: z.enum(["ollama", "none"]), ollamaBaseUrl: z.string().url(), ollamaModel: z.string().min(1).max(120), embeddingProvider: z.enum(["ollama", "none"]), embeddingBaseUrl: z.string().url(), embeddingModel: z.string().min(1).max(120), ragMinScore: z.number().min(0).max(20), ragMaxResults: z.number().int().min(1).max(100), ragMemoryLimit: z.number().int().min(1).max(100), ragRecentEventLimit: z.number().int().min(0).max(100), ragSkillLimit: z.number().int().min(0).max(50), ragIncludeGlobal: z.boolean(), autoConsolidation: z.boolean(), autoApprovalEnabled: z.boolean().default(true), autoApprovalIntervalMinutes: z.number().int().min(5).max(1440).default(60) });
+export const runtimeSettingsInput = z.object({ provider: z.enum(["ollama", "none"]), ollamaBaseUrl: z.string().url(), ollamaModel: z.string().min(1).max(120), profileModel: z.string().max(120).optional(), embeddingProvider: z.enum(["ollama", "none"]), embeddingBaseUrl: z.string().url(), embeddingModel: z.string().min(1).max(120), ragMinScore: z.number().min(0).max(20), ragMaxResults: z.number().int().min(1).max(100), ragMemoryLimit: z.number().int().min(1).max(100), ragRecentEventLimit: z.number().int().min(0).max(100), ragSkillLimit: z.number().int().min(0).max(50), ragIncludeGlobal: z.boolean(), autoConsolidation: z.boolean(), autoApprovalEnabled: z.boolean().default(true), autoApprovalIntervalMinutes: z.number().int().min(5).max(1440).default(60) });
 
 export interface SkillScript { filename: string; content: string; }
 export interface SkillBundle { name: string; description?: string; content: string; scripts: SkillScript[]; }
@@ -63,3 +64,71 @@ export const skillBundleInput = z.object({
 export const now = () => new Date().toISOString();
 export const newId = (prefix: string) => `${prefix}_${crypto.randomUUID()}`;
 export function redactSecrets(value: string): string { return value.replace(/(?:sk|pk|api)[_-][A-Za-z0-9_-]{12,}|(?:token|password|secret)\s*[:=]\s*[^\s,;]+/gi, "[REDACTED]"); }
+
+export const profileCategories = ["communication", "workflow", "habit", "taste", "goal", "trait", "life"] as const;
+export type ProfileCategory = (typeof profileCategories)[number];
+export const profileOrigins = ["stated", "inferred"] as const;
+export type ProfileOrigin = (typeof profileOrigins)[number];
+export const profileStatuses = ["active", "pending", "disabled"] as const;
+export type ProfileStatus = (typeof profileStatuses)[number];
+
+export interface ProfileEvidence {
+  sessionId: string;
+  excerpt: string;
+  occurredAt: string;
+}
+
+export interface ProfileItem {
+  id: string;
+  category: ProfileCategory;
+  statement: string;
+  origin: ProfileOrigin;
+  confidence: number;
+  evidence: ProfileEvidence[];
+  status: ProfileStatus;
+  inject: boolean;
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastDecayedAt?: string;
+  updatedAt: string;
+  revision: number;
+}
+
+export interface ExtractedProfileFact {
+  category: ProfileCategory;
+  statement: string;
+  origin: ProfileOrigin;
+  evidenceExcerpt: string;
+}
+
+export const profileEvidenceSchema = z.object({
+  sessionId: z.string().min(1).max(200),
+  excerpt: z.string().max(2_000),
+  occurredAt: z.string().min(1).max(40),
+});
+
+export const profileItemSchema = z.object({
+  id: z.string().min(1).max(200),
+  category: z.enum(profileCategories),
+  statement: z.string().min(1).max(4_000),
+  origin: z.enum(profileOrigins),
+  confidence: z.number().min(0).max(1),
+  evidence: z.array(profileEvidenceSchema).max(20),
+  status: z.enum(profileStatuses),
+  inject: z.boolean(),
+  count: z.number().int().nonnegative(),
+  firstSeenAt: z.string().min(1).max(40),
+  lastSeenAt: z.string().min(1).max(40),
+  lastDecayedAt: z.string().min(1).max(40).optional(),
+  updatedAt: z.string().min(1).max(40),
+  revision: z.number().int().positive(),
+});
+
+export const updateProfileItemInput = z.object({
+  expectedRevision: z.number().int().positive(),
+  statement: z.string().min(1).max(1000).optional(),
+  category: z.enum(profileCategories).optional(),
+  status: z.enum(profileStatuses).optional(),
+  inject: z.boolean().optional(),
+});

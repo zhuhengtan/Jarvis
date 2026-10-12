@@ -99,6 +99,11 @@ export const CustomLayout: React.FC<CustomLayoutProps> = () => {
       icon: <RobotOutlined />,
       label: "助理与认知自省",
     },
+    {
+      key: "/profile",
+      icon: <UserOutlined />,
+      label: "用户画像与认知",
+    },
     { key: "/settings", icon: <SettingOutlined />, label: "运行设置" },
   ];
 
@@ -113,6 +118,7 @@ export const CustomLayout: React.FC<CustomLayoutProps> = () => {
       "/goals": ["控制台", "项目目标"],
       "/skills": ["控制台", "技能注册表"],
       "/identity": ["控制台", "助理与认知自省"],
+      "/profile": ["控制台", "用户画像与认知"],
       "/rag": ["控制台", "RAG 知识检索"],
       "/settings": ["控制台", "运行设置"],
     };

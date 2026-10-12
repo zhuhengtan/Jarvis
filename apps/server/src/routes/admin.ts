@@ -201,5 +201,17 @@ export const adminRoutes: FastifyPluginAsync<AdminRoutesOptions> = async (app: F
       const deleted = await runtime.deleteSkill(name);
       return { success: deleted };
     });
+
+    protectedApp.get("/profile", async () => runtime.listProfiles());
+    protectedApp.get("/profile/digest", async () => ({ digest: await runtime.getProfileDigest() }));
+    protectedApp.patch("/profile/:id", async (request) => runtime.updateProfile((request.params as { id: string }).id, request.body));
+    protectedApp.delete("/profile/:id", async (request) => {
+      await runtime.deleteProfile((request.params as { id: string }).id);
+      return { ok: true };
+    });
+    protectedApp.post("/profile/extract", async (request) => {
+      const body = z.object({ sessionId: z.string().min(1) }).parse(request.body);
+      return runtime.reflectUserProfile(body.sessionId);
+    });
   });
 };

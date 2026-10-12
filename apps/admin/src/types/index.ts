@@ -142,3 +142,29 @@ export interface AutoReviewResult {
 }
 
 export interface RagResult { record: MemoryRecord; score: number; }
+
+export type ProfileCategory = "communication" | "workflow" | "habit" | "taste" | "goal" | "trait" | "life";
+export type ProfileOrigin = "stated" | "inferred";
+export type ProfileStatus = "active" | "pending" | "disabled";
+
+export interface ProfileEvidence {
+  sessionId: string;
+  excerpt: string;
+  occurredAt: string;
+}
+
+export interface ProfileItem {
+  id: string;
+  category: ProfileCategory;
+  statement: string;
+  origin: ProfileOrigin;
+  confidence: number;
+  evidence: ProfileEvidence[];
+  status: ProfileStatus;
+  inject: boolean;
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  updatedAt: string;
+  revision: number;
+}

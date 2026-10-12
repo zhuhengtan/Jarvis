@@ -12,6 +12,7 @@ import { SkillsPage } from "../pages/skills";
 import { IdentityPage } from "../pages/identity";
 import { RagPage } from "../pages/rag";
 import { SettingsPage } from "../pages/settings";
+import { ProfilePage } from "../pages/profile";
 
 // Auth Guard: ensure admin is authenticated
 const AuthGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -71,6 +72,10 @@ export const router = createBrowserRouter([
       {
         path: "identity",
         element: <IdentityPage />,
+      },
+      {
+        path: "profile",
+        element: <ProfilePage />,
       },
       { path: "settings", element: <SettingsPage /> },
       {
